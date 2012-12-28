@@ -61,7 +61,6 @@ void version(void)
 void usage(void)
 {
 	fprintf(stderr, "\n-g url         url (e.g. -g http://localhost/)\n");
-	fprintf(stderr, "-h hostname    hostname (e.g. localhost)\n");
 	fprintf(stderr, "-p portnr      portnumber (e.g. 80)\n");
 	fprintf(stderr, "-x host:port   hostname+portnumber of proxyserver\n");
 	fprintf(stderr, "-c count       how many times to connect\n");
@@ -111,7 +110,6 @@ void usage(void)
 	fprintf(stderr, "-V             show the version\n\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "--url			-g\n");
-	fprintf(stderr, "--hostname		-h\n");
 	fprintf(stderr, "--port			-p\n");
 	fprintf(stderr, "--host-port		-x\n");
 	fprintf(stderr, "--count		-c\n");
@@ -218,7 +216,9 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-	char *hostname = NULL;
+	char **hosts = NULL;
+  int n_hosts = 0;
+  char *hostname = NULL;        /* FIXME: remove me! */
 	char *proxy = NULL, *proxyhost = NULL;
 	int proxyport = 8080;
 	int portnr = 80;
@@ -272,7 +272,6 @@ int main(int argc, char *argv[])
 	static struct option long_options[] =
 	{
 		{"url",		1, NULL, 'g' },
-		{"hostname",	1, NULL, 'h' },
 		{"port",	1, NULL, 'p' },
 		{"host-port",	1, NULL, 'x' },
 		{"count",	1, NULL, 'c' },
@@ -320,7 +319,7 @@ int main(int argc, char *argv[])
 
 	buffer = (char *)mymalloc(page_size, "receive buffer");
 
-	while((c = getopt_long(argc, argv, "ZQ6Sy:XL:bBg:h:p:c:i:Gx:t:o:e:falqsmV?I:R:rn:N:z:AP:U:C:F", long_options, NULL)) != -1)
+	while((c = getopt_long(argc, argv, "ZQ6Sy:XL:bBg:hp:c:i:Gx:t:o:e:falqsmV?I:R:rn:N:z:AP:U:C:F", long_options, NULL)) != -1)
 	{
 		switch(c)
 		{
@@ -410,10 +409,6 @@ int main(int argc, char *argv[])
 
 			case 'r':
 				resolve_once = 1;
-				break;
-
-			case 'h':
-				hostname = strdup(optarg);
 				break;
 
 			case 'p':
@@ -520,8 +515,18 @@ int main(int argc, char *argv[])
 				return 1;
 		}
 	}
-	if (optind < argc)
-		get = argv[optind];
+
+  /* Multihost args */
+  n_hosts = argc - optind;
+  hosts = (char**) malloc (sizeof (char*) * n_hosts);
+	while (optind < argc)
+  {
+    int i = n_hosts - (argc - optind);
+    hosts[i] = mystrdup(argv[optind], "host name");
+
+    printf ("hosts[%u]: %s\n", i, hosts[i]); /* FIXME: debug */
+    optind++;
+  }
 
 	last_error[0] = 0x00;
 
@@ -1204,6 +1209,12 @@ error_exit:
 	free(request);
 	free(buffer);
 	free(getcopyorg);
+  while (n_hosts > 0)
+  {
+    free(hosts[n_hosts-1]);
+    n_hosts--;
+  }
+  free(hosts);
 
 	if (ok)
 		return 0;
