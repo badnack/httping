@@ -41,6 +41,12 @@
 #include "utils.h"
 #include "error.h"
 
+struct host_param{
+  char* request;
+  char* name;
+  char have_resolved;
+};
+
 static volatile int stop = 0;
 
 int quiet = 0;
@@ -216,12 +222,11 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-  char **hosts = NULL;
   int n_hosts = 0;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
   int portnr = 80;
-  char *get = NULL, **request = NULL;
+  char *get = NULL;
   int req_len = 0;
   int c = 0;
   int count = -1, curncount = 0;
@@ -261,6 +266,7 @@ int main(int argc, char *argv[])
   struct sockaddr_in *bind_to = NULL;
   struct sockaddr_in bind_to_4;
   struct sockaddr_in6 bind_to_6;
+  struct host_param *hp;
   char bind_to_valid = 0;
   char split = 0, use_ipv6 = 0;
   char persistent_connections = 0, persistent_did_reconnect = 0;
@@ -518,16 +524,15 @@ int main(int argc, char *argv[])
 
   /* Multihost args */
   n_hosts = argc - optind;
-  hosts = (char**) malloc (sizeof (char*) * (!n_hosts) ? 1 : n_hosts);
-  request = (char**) malloc (sizeof (char*) * (!n_hosts) ? 1 : n_hosts);
+  hp = (struct host_param*) calloc(sizeof(struct host_param), (!n_hosts) ? 1 : n_hosts);
   /* n_hosts = (!n_hosts) ? 1 : n_hosts; */ //FIXME
 
   while (optind < argc)
     {
       int i = n_hosts - (argc - optind);
-      hosts[i] = mystrdup(argv[optind], "host name");
+      hp[i].name = mystrdup(argv[optind], "host name");
 
-      printf ("hosts[%u]: %s\n", i, hosts[i]); /* FIXME: debug */
+      printf ("hosts[%u]: %s\n", i, hp[i].name); /* FIXME: debug */
       optind++;
     }
 
@@ -581,7 +586,7 @@ int main(int argc, char *argv[])
             }
         }
 
-      hosts[0] = getcopy;
+      hp[0].name = getcopy;
       n_hosts = 1;
     }
 
@@ -607,14 +612,14 @@ int main(int argc, char *argv[])
 #ifndef NO_SSL
           if (use_ssl)
             {
-              get = mymalloc(8 /* http:// */ + strlen(hosts[index]) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
-              sprintf(get, "https://%s:%d/", hosts[index], portnr);
+              get = mymalloc(8 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
+              sprintf(get, "https://%s:%d/", hp[index].name, portnr);
             }
           else
             {
 #endif
-              get = mymalloc(7 /* http:// */ + strlen(hosts[index]) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
-              sprintf(get, "http://%s:%d/", hosts[index], portnr);
+              get = mymalloc(7 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
+              sprintf(get, "http://%s:%d/", hp[index].name, portnr);
 #ifndef NO_SSL
             }
 #endif
@@ -646,9 +651,9 @@ int main(int argc, char *argv[])
         }
 #endif
 
-      request[index] = mymalloc(strlen(get) + 8192, "request");
+      hp[index].request = mymalloc(strlen(get) + 8192, "request");
       if (proxyhost)
-        sprintf(request[index], "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
+        sprintf(hp[index].request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
       else
         {
           char *dummy = get, *slash;
@@ -659,24 +664,24 @@ int main(int argc, char *argv[])
 
           slash = strchr(dummy, '/');
           if (slash)
-            sprintf(request[index], "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
+            sprintf(hp[index].request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
           else
-            sprintf(request[index], "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
+            sprintf(hp[index].request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
         }
       if (useragent)
-        sprintf(&request[index][strlen(request[index])], "User-Agent: %s\r\n", useragent);
+        sprintf(&hp[index].request[strlen(hp[index].request)], "User-Agent: %s\r\n", useragent);
       else
-        sprintf(&(request[index][strlen(request[index])]), "User-Agent: HTTPing v" VERSION "\r\n");
-      sprintf(&request[index][strlen(request[index])], "Host: %s\r\n", hosts[index]);
+        sprintf(&(hp[index].request[strlen(hp[index].request)]), "User-Agent: HTTPing v" VERSION "\r\n");
+      sprintf(&hp[index].request[strlen(hp[index].request)], "Host: %s\r\n", hp[index].name);
       if (referer)
-        sprintf(&request[index][strlen(request[index])], "Referer: %s\r\n", referer);
+        sprintf(&hp[index].request[strlen(hp[index].request)], "Referer: %s\r\n", referer);
       if (ask_compression)
-        sprintf(&request[index][strlen(request[index])], "Accept-Encoding: gzip,deflate\r\n");
+        sprintf(&hp[index].request[strlen(hp[index].request)], "Accept-Encoding: gzip,deflate\r\n");
 
       if (no_cache)
         {
-          sprintf(&request[index][strlen(request[index])], "Pragma: no-cache\r\n");
-          sprintf(&request[index][strlen(request[index])], "Cache-Control: no-cache\r\n");
+          sprintf(&hp[index].request[strlen(hp[index].request)], "Pragma: no-cache\r\n");
+          sprintf(&hp[index].request[strlen(hp[index].request)], "Cache-Control: no-cache\r\n");
         }
 
       /* Basic Authentification */
@@ -687,21 +692,21 @@ int main(int argc, char *argv[])
           error_exit("Basic Authnetication (-A) can only be used with a username and/or password (-U -P) ");
         sprintf(auth_string,"%s:%s",usr,pwd);
         enc_b64(auth_string, strlen(auth_string), b64_auth_string);
-        sprintf(&request[index][strlen(request[index])], "Authorization: Basic %s\r\n", b64_auth_string);
+        sprintf(&hp[index].request[strlen(hp[index].request)], "Authorization: Basic %s\r\n", b64_auth_string);
       }
 
       /* Cookie Insertion */
       if (cookie) {
-        sprintf(&request[index][strlen(request[index])], "Cookie: %s;\r\n", cookie);
+        sprintf(&hp[index].request[strlen(hp[index].request)], "Cookie: %s;\r\n", cookie);
       }
 
       if (persistent_connections)
-        sprintf(&request[index][strlen(request[index])], "Connection: keep-alive\r\n");
+        sprintf(&hp[index].request[strlen(hp[index].request)], "Connection: keep-alive\r\n");
 
-      strcat(request[index], "\r\n");
+      strcat(hp[index].request, "\r\n");
 
       if (!quiet && !machine_readable && !nagios_mode )
-        printf("PING %s:%d (%s):\n", hosts[index], portnr, get);
+        printf("PING %s:%d (%s):\n", hp[index].name, portnr, get);
       if (get != NULL)
         {
           free(get);
@@ -714,25 +719,25 @@ int main(int argc, char *argv[])
 
   timeout *= 1000;	/* change to ms */
 
-  host = proxyhost?proxyhost:hosts[0];
+  host = proxyhost?proxyhost:hp[0].name;
   port = proxyhost?proxyport:portnr;
 
   struct sockaddr_in6 addr;
   struct addrinfo *ai = NULL, *ai_use;
 
   double started_at = get_ts();
-  if (resolve_once)
-    {
-      if (resolve_host(host, &ai, use_ipv6, port) == -1)
-        {
-          err++;
-          emit_error();
-          have_resolved = 1;
-        }
+  /* if (resolve_once) */
+  /*   { */
+  /*     if (resolve_host(host, &ai, use_ipv6, port) == -1) */
+  /*       { */
+  /*         err++; */
+  /*         emit_error(); */
+  /*         have_resolved = 1; */
+  /*       } */
 
-      ai_use = select_resolved_host(ai, use_ipv6);
-      get_addr(ai_use, &addr);
-    }
+  /*     ai_use = select_resolved_host(ai, use_ipv6); */
+  /*     get_addr(ai_use, &addr); */
+  /*   } */
 
   if (persistent_connections)
     fd = -1;
@@ -759,7 +764,7 @@ int main(int argc, char *argv[])
           curncount++;
           for(index = 0; index < n_hosts; index++)
             {
-              req_len = strlen(request[index]);
+              req_len = strlen(hp[index].request);
             persistent_loop:
               if ((!resolve_once || (resolve_once == 1 && have_resolved == 0)) && fd == -1)
                 {
@@ -775,12 +780,11 @@ int main(int argc, char *argv[])
                     {
                       err++;
                       emit_error();
-                      break;
+                      break; //continue?
                     }
 
                   ai_use = select_resolved_host(ai, use_ipv6);
                   get_addr(ai_use, &addr);
-
                   have_resolved = 1;
                 }
 
@@ -788,7 +792,7 @@ int main(int argc, char *argv[])
 
               if ((persistent_connections && fd < 0) || (!persistent_connections))
                 {
-                  fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, request[0], req_len, &req_sent);
+                  fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[0].request, req_len, &req_sent);
                 }
 
 
@@ -861,15 +865,15 @@ int main(int argc, char *argv[])
             }
 
 
-          req_len = strlen(request[0]);
+          req_len = strlen(hp[0].request);
 #ifndef NO_SSL
           if (use_ssl)
-            rc = WRITE_SSL(ssl_h, request[0], req_len);
+            rc = WRITE_SSL(ssl_h, hp[0].request, req_len);
           else
 #endif
             {
               if(!req_sent)
-                rc = mywrite(fd, request[0], req_len, timeout);
+                rc = mywrite(fd, hp[0].request, req_len, timeout);
               else
                 rc = req_len;
             }
@@ -1171,7 +1175,7 @@ int main(int argc, char *argv[])
   double total_took = get_ts() - started_at;
   if (!quiet && !machine_readable && !nagios_mode)
     {
-      printf("--- %s ping statistics ---\n", hosts[0]);
+      printf("--- %s ping statistics ---\n", hp[0].name);
 
       if (curncount == 0 && err > 0)
         fprintf(stderr, "internal error! (curncount)\n");
@@ -1228,12 +1232,11 @@ int main(int argc, char *argv[])
   free(getcopyorg);
   while (n_hosts > 0)
     {
-      free(request[n_hosts]);
-      free(hosts[n_hosts-1]);
+      free(hp[n_hosts-1].request);
+      free(hp[n_hosts-1].name);
       n_hosts--;
     }
-  free(hosts);
-  free(request);
+  free(hp);
 
   if (ok)
     return 0;
