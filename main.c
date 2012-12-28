@@ -702,7 +702,7 @@ int main(int argc, char *argv[])
 
       if (!quiet && !machine_readable && !nagios_mode )
         printf("PING %s:%d (%s):\n", hosts[index], portnr, get);
-      if (get == NULL)
+      if (get != NULL)
         {
           free(get);
           get = NULL;
