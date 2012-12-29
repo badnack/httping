@@ -276,6 +276,7 @@ int main(int argc, char *argv[])
   char *getcopyorg = NULL;
   int tfo = 0;
   int index;
+  fd_set rd, wr;
 
   static struct option long_options[] =
     {
@@ -605,6 +606,9 @@ int main(int argc, char *argv[])
 
 
   /* init variables */
+  FD_ZERO(&rd);
+  FD_ZERO(&wr);
+
   for(index = 0; index < n_hosts; index++)
     {
       ph_init(&hp[index].ph, page_size, NULL, NULL); //FIXME
@@ -752,7 +756,7 @@ int main(int argc, char *argv[])
       long long int bytes_transferred = 0;
 
       dstart = get_ts();
-
+      printf("while\n");
       for(;;)
         {
           char *fp = NULL;
@@ -762,11 +766,13 @@ int main(int argc, char *argv[])
           int len = 0, overflow = 0, headers_len;
 
           curncount++;
-          for(index = 0; index < n_hosts; index++)
+          for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
             {
+              if(hp[index].ph.state == 2)
+                continue;
               host = proxyhost?proxyhost:hp[index].name;
             persistent_loop:
-              if ((!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)) && hp[index].ph.fd == -1)
+              if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
                 {
                   memset(&addr, 0x00, sizeof(addr));
 
@@ -782,6 +788,7 @@ int main(int argc, char *argv[])
                       emit_error();
                       hp[index].have_resolved = 1;
                       hp[index].error = 1;
+                      printf("break to change!\n");
                       break; //continue?
                     }
 
@@ -789,21 +796,35 @@ int main(int argc, char *argv[])
                   get_addr(ai_use, &addr);
                 }
 
-              req_sent = 0;
+              /* req_sent = 0; */
 
-              if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
+              if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
                 {
+                  if (hp[index].ph.fd < 0)
+                      hp[index].ph.state = 1;
                   hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
+                  if(hp[index].ph.state == 1)
+                    FD_SET(hp[index].ph.fd, &wr); //ready to send
+
                 }
 
 
-              if (hp[index].ph.fd == -3)	/* ^C pressed */
-                break;// continue?
-
+              if (hp[index].ph.fd == -3)
+                {	/* ^C pressed */
+                  printf("break to change!\n");
+                  break;// continue?
+                }
               if (hp[index].ph.fd < 0)
                 {
                   emit_error();
                   hp[index].ph.fd = -1;
+                  hp[index].ph.state = 0;
+                  hp[index].error = 1;
+                  if (hp[index].ph.fd == -2)
+                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
+                  err++;
+                  printf("break to change!\n");
+                  break; //continue ?
                 }
 
               if (hp[index].ph.fd >= 0)
@@ -813,6 +834,8 @@ int main(int argc, char *argv[])
                     {
                       close(hp[index].ph.fd);
                       fd = -1;
+                      hp[index].error = 1;
+                      printf("break to change!\n");
                       break; //continue?
                     }
 
@@ -821,6 +844,8 @@ int main(int argc, char *argv[])
                     {
                       close(hp[index].ph.fd);
                       hp[index].ph.fd = -1;
+                      hp[index].error = 1;
+                      printf("break to change!\n");
                       break; //continue?
                     }
 
@@ -840,7 +865,9 @@ int main(int argc, char *argv[])
                                 {
                                   close(hp[index].ph.fd);
                                   hp[index].ph.fd = -1;
+                                  hp[index].ph.state = 0;
                                   persistent_did_reconnect = 1;
+                                  printf("goto loop\n");
                                   goto persistent_loop;
                                 }
                             }
@@ -851,316 +878,342 @@ int main(int argc, char *argv[])
               if (split)
                 dafter_connect = get_ts();
 
-              if (hp[index].ph.fd < 0)
-                {
-                  if (hp[index].ph.fd == -2)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
-
-                  emit_error();
-                  err++;
-
-                  hp[index].ph.fd = -1;
-
-                  break; //continue ?
-                }
+              /* if (hp[index].ph.fd < 0) */
+              /*   { */
+              /*     if (hp[index].ph.fd == -2) */
+              /*       snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n"); */
+              /*     emit_error(); */
+              /*     hp[index].ph.state = 0; */
+              /*     hp[index].ph.fd = -1; */
+              /*     hp[index].error = 1; */
+              /*     break; //continue ? */
+              /*   } */
             }
 
           //select
-          fd = hp[2].ph.fd;
+
+          select(hp[0].ph.fd + 1, &rd, &wr, NULL, NULL); //FIXME: manage errors
+          for(index = 0; index < n_hosts; index++)
+            {
+              if(FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
+                {
+                  printf("write state\n");
+                  fd = hp[index].ph.fd;
 #ifndef NO_SSL
-          if (use_ssl)
-            rc = WRITE_SSL(ssl_h, hp[0].request, hp[0].req_len);
-          else
-#endif
-            {
-              if(!req_sent)
-                rc = mywrite(fd, hp[0].request, hp[0].req_len, timeout);
-              else
-                rc = hp[0].req_len;
-            }
-
-          if (rc != hp[0].req_len)
-            {
-              if (persistent_connections)
-                {
-                  if (++persistent_tries < 2)
-                    {
-                      close(fd);
-                      fd = -1;
-                      persistent_did_reconnect = 1;
-                      goto persistent_loop;
-                    }
-                }
-
-              if (rc == -1)
-                snprintf(last_error, ERROR_BUFFER_SIZE, "error sending request to host\n");
-              else if (rc == -2)
-                snprintf(last_error, ERROR_BUFFER_SIZE, "timeout sending to host\n");
-              else if (rc == -3)
-                {/* ^C */}
-              else if (rc == 0)
-                snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
-
-              emit_error();
-
-              close(fd);
-              fd = -1;
-              err++;
-
-              break;
-            }
-
-          rc = get_HTTP_headers(fd, ssl_h, &reply, &overflow, timeout);
-
-          if ((show_statuscodes || machine_readable) && reply != NULL)
-            {
-              /* statuscode is in first line behind
-               * 'HTTP/1.x'
-               */
-              char *dummy = strchr(reply, ' ');
-
-              if (dummy)
-                {
-                  sc = strdup(dummy + 1);
-
-                  /* lines are normally terminated with a
-                   * CR/LF
-                   */
-                  dummy = strchr(sc, '\r');
-                  if (dummy)
-                    *dummy = 0x00;
-                  dummy = strchr(sc, '\n');
-                  if (dummy)
-                    *dummy = 0x00;
-                }
-            }
-
-          if (ask_compression && reply != NULL)
-            {
-              char *encoding = strstr(reply, "\nContent-Encoding:");
-              if (encoding)
-                {
-                  char *dummy = strchr(encoding + 1, '\n');
-                  if (dummy) *dummy = 0x00;
-                  dummy = strchr(sc, '\r');
-                  if (dummy) *dummy = 0x00;
-
-                  if (strstr(encoding, "gzip") == 0 || strstr(encoding, "deflate") == 0)
-                    {
-                      is_compressed = 1;
-                    }
-                }
-            }
-
-          if (persistent_connections && show_bytes_xfer)
-            {
-              char *length = strstr(reply, "\nContent-Length:");
-              if (!length)
-                {
-                  snprintf(last_error, ERROR_BUFFER_SIZE, "'Content-Length'-header missing!\n");
-                  emit_error();
-                  close(fd);
-                  fd = -1;
-                  break;
-                }
-              len = atoi(&length[17]);
-            }
-
-          headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;
-
-          free(reply);
-
-          if (rc < 0)
-            {
-              if (persistent_connections)
-                {
-                  if (++persistent_tries < 2)
-                    {
-                      close(fd);
-                      fd = -1;
-                      persistent_did_reconnect = 1;
-                      goto persistent_loop;
-                    }
-                }
-
-              if (rc == RC_SHORTREAD)
-                snprintf(last_error, ERROR_BUFFER_SIZE, "error receiving reply from host\n");
-              else if (rc == RC_TIMEOUT)
-                snprintf(last_error, ERROR_BUFFER_SIZE, "timeout receiving reply from host\n");
-
-              emit_error();
-
-              close(fd);
-              fd = -1;
-              err++;
-
-              break;
-            }
-
-          ok++;
-
-          if (get_instead_of_head && show_Bps)
-            {
-              double dl_start = get_ts(), dl_end;
-              int cur_limit = Bps_limit;
-
-              if (persistent_connections)
-                {
-                  if (cur_limit == -1 || len < cur_limit)
-                    cur_limit = len - overflow;
-                }
-
-              for(;;)
-                {
-                  int n = cur_limit != -1 ? min(cur_limit - bytes_transferred, page_size) : page_size;
-                  int rc = read(fd, buffer, n);
-
-                  if (rc == -1)
-                    {
-                      if (errno != EINTR && errno != EAGAIN)
-                        error_exit("read failed");
-                    }
-                  else if (rc == 0)
-                    break;
-
-                  bytes_transferred += rc;
-
-                  if (cur_limit != -1 && bytes_transferred >= cur_limit)
-                    break;
-                }
-
-              dl_end = get_ts();
-
-              Bps = bytes_transferred / max(dl_end - dl_start, 0.000001);
-              Bps_min = min(Bps_min, Bps);
-              Bps_max = max(Bps_max, Bps);
-              Bps_avg += Bps;
-            }
-
-          dend = get_ts();
-
-#ifndef NO_SSL
-          if (use_ssl && !persistent_connections)
-            {
-              if (show_fp && ssl_h != NULL)
-                {
-                  fp = get_fingerprint(ssl_h);
-                }
-
-              if (close_ssl_connection(ssl_h, fd) == -1)
-                {
-                  snprintf(last_error, ERROR_BUFFER_SIZE, "error shutting down ssl\n");
-                  emit_error();
-                }
-
-              SSL_free(ssl_h);
-              ssl_h = NULL;
-            }
-#endif
-
-          if (!persistent_connections)
-            {
-              close(fd);
-              fd = -1;
-            }
-
-          ms = (dend - dstart) * 1000.0;
-          avg += ms;
-          min = min > ms ? ms : min;
-          max = max < ms ? ms : max;
-
-          if (machine_readable)
-            {
-              if (sc)
-                {
-                  char *dummy = strchr(sc, ' ');
-
-                  if (dummy) *dummy = 0x00;
-
-                  if (strstr(ok_str, sc))
-                    {
-                      printf("%f", ms);
-                    }
+                  if (use_ssl)
+                    rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
                   else
+#endif
                     {
-                      printf("%s", err_str);
+                      /* if(!req_sent) */
+                        rc = mywrite(fd, hp[index].request, hp[index].req_len, timeout);
+                      /* else */
+                      /*   rc = hp[index].req_len; */
                     }
 
-                  if (show_statuscodes)
-                    printf(" %s", sc);
-                }
-              else
-                {
-                  printf("%s", err_str);
-                }
-              if(audible)
-                putchar('\a');
-              printf("\n");
-            }
-          else if (!quiet && !nagios_mode)
-            {
-              char current_host[1024];
-              char *operation = !persistent_connections ? "connected to" : "pinged host";
-
-              if (getnameinfo((const struct sockaddr *)&addr, sizeof(addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) == -1)
-                snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
-
-              if (persistent_connections && show_bytes_xfer)
-                printf("%s %s:%d (%d/%d bytes), seq=%d ", operation, current_host, portnr, headers_len, len, curncount-1);
-              else
-                printf("%s %s:%d (%d bytes), seq=%d ", operation, current_host, portnr, headers_len, curncount-1);
-
-              if (split)
-                printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - dstart) * 1000.0, (dend - dafter_connect) * 1000.0, ms, sc?sc:"");
-              else
-                printf("time=%.2f ms %s", ms, sc?sc:"");
-
-              if (persistent_did_reconnect)
-                {
-                  printf(" C");
-                  persistent_did_reconnect = 0;
-                }
-
-              if (show_Bps)
-                {
-                  printf(" %dKB/s", Bps / 1024);
-                  if (show_bytes_xfer)
-                    printf(" %dKB", (int)(bytes_transferred / 1024));
-                  if (ask_compression)
+                  if (rc != hp[index].req_len)
                     {
-                      printf(" (");
-                      if (!is_compressed)
-                        printf("not ");
-                      printf("compressed)");
+                      if (persistent_connections)
+                        {
+                          if (++persistent_tries < 2)
+                            {
+                              close(fd);
+                              persistent_did_reconnect = 1;
+                              hp[index].ph.fd = -1;
+                              hp[index].ph.state = 0;
+                              printf("goto loop\n");
+                              goto persistent_loop;
+                            }
+                        }
+
+                      if (rc == -1)
+                        snprintf(last_error, ERROR_BUFFER_SIZE, "error sending request to host\n");
+                      else if (rc == -2)
+                        snprintf(last_error, ERROR_BUFFER_SIZE, "timeout sending to host\n");
+                      else if (rc == -3)
+                        {/* ^C */}
+                      else if (rc == 0)
+                        snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
+
+                      emit_error();
+
+                      close(fd);
+                      fd = -1;
+                      err++;
+                      hp[index].error = 1;
+                      hp[index].ph.state = 0;
+                      break; // FIXME NO BREAK!!
                     }
+                  hp[index].ph.state = 2;
+                  FD_CLR(hp[index].ph.fd, &wr);
+                  FD_SET(hp[index].ph.fd, &rd); //ready to read
                 }
 
-              if (use_ssl && show_fp && fp != NULL)
+              else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
                 {
-                  printf(" %s", fp);
-                  free(fp);
-                }
-              if(audible)
-                putchar('\a');
-              printf("\n");
-            }
+                  printf("read state\n");
+                  fd = hp[index].ph.fd;
+                  rc = get_HTTP_headers(fd, ssl_h, &reply, &overflow, timeout);
 
-          if (show_statuscodes && ok_str != NULL && sc != NULL)
-            {
-              scdummy = strchr(sc, ' ');
-              if (scdummy) *scdummy = 0x00;
+                  if ((show_statuscodes || machine_readable) && reply != NULL)
+                    {
+                      /* statuscode is in first line behind
+                       * 'HTTP/1.x'
+                       */
+                      char *dummy = strchr(reply, ' ');
 
-              if (strstr(ok_str, sc) == NULL)
-                {
-                  ok--;
-                  err++;
-                }
-            }
+                      if (dummy)
+                        {
+                          sc = strdup(dummy + 1);
 
-          free(sc);
+                          /* lines are normally terminated with a
+                           * CR/LF
+                           */
+                          dummy = strchr(sc, '\r');
+                          if (dummy)
+                            *dummy = 0x00;
+                          dummy = strchr(sc, '\n');
+                          if (dummy)
+                            *dummy = 0x00;
+                        }
+                    }
 
+                  if (ask_compression && reply != NULL)
+                    {
+                      char *encoding = strstr(reply, "\nContent-Encoding:");
+                      if (encoding)
+                        {
+                          char *dummy = strchr(encoding + 1, '\n');
+                          if (dummy) *dummy = 0x00;
+                          dummy = strchr(sc, '\r');
+                          if (dummy) *dummy = 0x00;
+
+                          if (strstr(encoding, "gzip") == 0 || strstr(encoding, "deflate") == 0)
+                            {
+                              is_compressed = 1;
+                            }
+                        }
+                    }
+
+                  if (persistent_connections && show_bytes_xfer)
+                    {
+                      char *length = strstr(reply, "\nContent-Length:");
+                      if (!length)
+                        {
+                          snprintf(last_error, ERROR_BUFFER_SIZE, "'Content-Length'-header missing!\n");
+                          emit_error();
+                          close(fd);
+                          fd = -1;
+                          hp[index].error = 1;
+                          hp[index].ph.state = 0;
+                          break;
+                        }
+                      len = atoi(&length[17]);
+                    }
+
+                  headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;
+
+                  free(reply);
+
+                  if (rc < 0)
+                    {
+                      if (persistent_connections)
+                        {
+                          if (++persistent_tries < 2)
+                            {
+                              close(fd);
+                              hp[index].ph.state = 0;
+                              hp[index].ph.fd = -1;
+                              persistent_did_reconnect = 1;
+                              printf("goto loop\n");
+                              goto persistent_loop;
+                            }
+                        }
+
+                      if (rc == RC_SHORTREAD)
+                        snprintf(last_error, ERROR_BUFFER_SIZE, "error receiving reply from host\n");
+                      else if (rc == RC_TIMEOUT)
+                        snprintf(last_error, ERROR_BUFFER_SIZE, "timeout receiving reply from host\n");
+
+                      emit_error();
+
+                      close(fd);
+                      fd = -1;
+                      err++;
+                      hp[index].error = 1;
+                      hp[index].ph.state = 0;
+                      break;
+                    }
+
+                  ok++;
+                  hp[index].ph.state = 1;
+                  FD_CLR(hp[index].ph.fd, &rd);
+                  FD_SET(hp[index].ph.fd, &wr); //ready to send
+                  if (get_instead_of_head && show_Bps)
+                    {
+                      double dl_start = get_ts(), dl_end;
+                      int cur_limit = Bps_limit;
+
+                      if (persistent_connections)
+                        {
+                          if (cur_limit == -1 || len < cur_limit)
+                            cur_limit = len - overflow;
+                        }
+
+                      for(;;)
+                        {
+                          int n = cur_limit != -1 ? min(cur_limit - bytes_transferred, page_size) : page_size;
+                          int rc = read(fd, buffer, n);
+
+                          if (rc == -1)
+                            {
+                              if (errno != EINTR && errno != EAGAIN)
+                                error_exit("read failed");
+                            }
+                          else if (rc == 0)
+                            break;
+
+                          bytes_transferred += rc;
+
+                          if (cur_limit != -1 && bytes_transferred >= cur_limit)
+                            break;
+                        }
+
+                      dl_end = get_ts();
+
+                      Bps = bytes_transferred / max(dl_end - dl_start, 0.000001);
+                      Bps_min = min(Bps_min, Bps);
+                      Bps_max = max(Bps_max, Bps);
+                      Bps_avg += Bps;
+                    }
+
+                  dend = get_ts();
+
+#ifndef NO_SSL
+                  if (use_ssl && !persistent_connections)
+                    {
+                      if (show_fp && ssl_h != NULL)
+                        {
+                          fp = get_fingerprint(ssl_h);
+                        }
+
+                      if (close_ssl_connection(ssl_h, fd) == -1)
+                        {
+                          snprintf(last_error, ERROR_BUFFER_SIZE, "error shutting down ssl\n");
+                          emit_error();
+                        }
+
+                      SSL_free(ssl_h);
+                      ssl_h = NULL;
+                    }
+#endif
+
+                  if (!persistent_connections)
+                    {
+                      close(fd);
+                      fd = -1;
+                    }
+
+                  ms = (dend - dstart) * 1000.0;
+                  avg += ms;
+                  min = min > ms ? ms : min;
+                  max = max < ms ? ms : max;
+
+                  if (machine_readable)
+                    {
+                      if (sc)
+                        {
+                          char *dummy = strchr(sc, ' ');
+
+                          if (dummy) *dummy = 0x00;
+
+                          if (strstr(ok_str, sc))
+                            {
+                              printf("%f", ms);
+                            }
+                          else
+                            {
+                              printf("%s", err_str);
+                            }
+
+                          if (show_statuscodes)
+                            printf(" %s", sc);
+                        }
+                      else
+                        {
+                          printf("%s", err_str);
+                        }
+                      if(audible)
+                        putchar('\a');
+                      printf("\n");
+                    }
+                  else if (!quiet && !nagios_mode)
+                    {
+                      char current_host[1024];
+                      char *operation = !persistent_connections ? "connected to" : "pinged host";
+
+                      if (getnameinfo((const struct sockaddr *)&addr, sizeof(addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) == -1)
+                        snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
+
+                      if (persistent_connections && show_bytes_xfer)
+                        printf("%s %s:%d (%d/%d bytes), seq=%d ", operation, current_host, portnr, headers_len, len, curncount-1);
+                      else
+                        printf("%s %s:%d (%d bytes), seq=%d ", operation, current_host, portnr, headers_len, curncount-1);
+
+                      if (split)
+                        printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - dstart) * 1000.0, (dend - dafter_connect) * 1000.0, ms, sc?sc:"");
+                      else
+                        printf("time=%.2f ms %s", ms, sc?sc:"");
+
+                      if (persistent_did_reconnect)
+                        {
+                          printf(" C");
+                          persistent_did_reconnect = 0;
+                        }
+
+                      if (show_Bps)
+                        {
+                          printf(" %dKB/s", Bps / 1024);
+                          if (show_bytes_xfer)
+                            printf(" %dKB", (int)(bytes_transferred / 1024));
+                          if (ask_compression)
+                            {
+                              printf(" (");
+                              if (!is_compressed)
+                                printf("not ");
+                              printf("compressed)");
+                            }
+                        }
+
+                      if (use_ssl && show_fp && fp != NULL)
+                        {
+                          printf(" %s", fp);
+                          free(fp);
+                        }
+                      if(audible)
+                        putchar('\a');
+                      printf("\n");
+                    }
+
+                  if (show_statuscodes && ok_str != NULL && sc != NULL)
+                    {
+                      scdummy = strchr(sc, ' ');
+                      if (scdummy) *scdummy = 0x00;
+
+                      if (strstr(ok_str, sc) == NULL)
+                        {
+                          ok--;
+                          err++;
+                        }
+                    }
+
+                  free(sc);
+                  /* break; // return to while */
+                }// end read condition
+
+            }// for select
           break;
-        }
+        }// for(;;)
 
       fflush(NULL);
 
