@@ -40,7 +40,7 @@
 #include "res.h"
 #include "utils.h"
 #include "error.h"
-#include "handler.h"
+/* #include "handler.h" */
 #include "hostparam.h"
 
 static volatile int stop = 0;
@@ -718,7 +718,7 @@ int main(int argc, char *argv[])
 
   port = proxyhost?proxyport:portnr;
 
-  struct sockaddr_in6 addr;
+  /* struct sockaddr_in6 addr; */
   struct addrinfo *ai = NULL, *ai_use;
 
   double started_at = get_ts();
@@ -765,7 +765,7 @@ int main(int argc, char *argv[])
             persistent_loop:
               if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
                 {
-                  memset(&addr, 0x00, sizeof(addr));
+                  memset(&hp[index].addr, 0x00, sizeof(hp[index].addr));
 
                   if (ai)
                     {
@@ -784,7 +784,7 @@ int main(int argc, char *argv[])
                     }
 
                   ai_use = select_resolved_host(ai, use_ipv6);
-                  get_addr(ai_use, &addr);
+                  get_addr(ai_use, &hp[index].addr);
                 }
 
               /* req_sent = 0; */
@@ -796,10 +796,7 @@ int main(int argc, char *argv[])
                       hp[index].ph.state = 1;
                   hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
                   if(hp[index].ph.state == 1)
-                    {
                       FD_SET(hp[index].ph.fd, &wr); //ready to send
-                      printf("host: %s, ready to send\n", hp[index].name);
-                    }
                 }
 
 
@@ -891,7 +888,6 @@ int main(int argc, char *argv[])
             {
               if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
                 {
-                  printf("host: %s, write state\n", hp[index].name);
                   fd = hp[index].ph.fd;
 #ifndef NO_SSL
                   if (use_ssl)
@@ -945,7 +941,6 @@ int main(int argc, char *argv[])
 
               else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
                 {
-                  printf("host: %s, read state\n", hp[index].name);
                   fd = hp[index].ph.fd;
                   rc = get_HTTP_headers(fd, ssl_h, &reply, &overflow, timeout);
 
@@ -1146,7 +1141,8 @@ int main(int argc, char *argv[])
                       char current_host[1024];
                       char *operation = !persistent_connections ? "connected to" : "pinged host";
 
-                      if (getnameinfo((const struct sockaddr *)&addr, sizeof(addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) == -1)
+                      /* FIXME store ip during the resolve operation instead of here*/
+                      if (getnameinfo((const struct sockaddr *)&hp[index].addr, sizeof(hp[index].addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) == -1)
                         snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                       if (persistent_connections && show_bytes_xfer)

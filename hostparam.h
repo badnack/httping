@@ -23,6 +23,7 @@ struct host_param{
   char* name;
   char have_resolved;
   int error;
+  struct sockaddr_in6 addr;
   ping_handler ph;
 };
 
