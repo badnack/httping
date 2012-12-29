@@ -41,15 +41,7 @@
 #include "utils.h"
 #include "error.h"
 #include "handler.h"
-
-struct host_param{
-  char* request;
-  int req_len;
-  char* name;
-  char have_resolved;
-  int error;
-  ping_handler ph;
-};
+#include "hostparam.h"
 
 static volatile int stop = 0;
 
@@ -268,7 +260,7 @@ int main(int argc, char *argv[])
   struct sockaddr_in *bind_to = NULL;
   struct sockaddr_in bind_to_4;
   struct sockaddr_in6 bind_to_6;
-  struct host_param *hp;
+  host_param *hp;
   char bind_to_valid = 0;
   char split = 0, use_ipv6 = 0;
   char persistent_connections = 0, persistent_did_reconnect = 0;
@@ -527,7 +519,7 @@ int main(int argc, char *argv[])
 
   /* Multihost args */
   n_hosts = argc - optind;
-  hp = (struct host_param*) calloc(sizeof(struct host_param), (!n_hosts) ? 1 : n_hosts);
+  hp = (host_param*) calloc(sizeof(host_param), (!n_hosts) ? 1 : n_hosts);
   /* n_hosts = (!n_hosts) ? 1 : n_hosts; */ //FIXME
 
   while (optind < argc)
@@ -756,7 +748,6 @@ int main(int argc, char *argv[])
       long long int bytes_transferred = 0;
 
       dstart = get_ts();
-      printf("while\n");
       for(;;)
         {
           char *fp = NULL;
@@ -800,12 +791,15 @@ int main(int argc, char *argv[])
 
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
                 {
+                  printf("host: %s, connet again\n", hp[index].name);
                   if (hp[index].ph.fd < 0)
                       hp[index].ph.state = 1;
                   hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
                   if(hp[index].ph.state == 1)
-                    FD_SET(hp[index].ph.fd, &wr); //ready to send
-
+                    {
+                      FD_SET(hp[index].ph.fd, &wr); //ready to send
+                      printf("host: %s, ready to send\n", hp[index].name);
+                    }
                 }
 
 
@@ -892,12 +886,12 @@ int main(int argc, char *argv[])
 
           //select
 
-          select(hp[0].ph.fd + 1, &rd, &wr, NULL, NULL); //FIXME: manage errors
-          for(index = 0; index < n_hosts; index++)
+          select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL); //FIXME: manage errors
+          for (index = 0; index < n_hosts; index++)
             {
-              if(FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
+              if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
                 {
-                  printf("write state\n");
+                  printf("host: %s, write state\n", hp[index].name);
                   fd = hp[index].ph.fd;
 #ifndef NO_SSL
                   if (use_ssl)
@@ -951,7 +945,7 @@ int main(int argc, char *argv[])
 
               else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
                 {
-                  printf("read state\n");
+                  printf("host: %s, read state\n", hp[index].name);
                   fd = hp[index].ph.fd;
                   rc = get_HTTP_headers(fd, ssl_h, &reply, &overflow, timeout);
 
