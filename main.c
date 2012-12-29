@@ -40,11 +40,15 @@
 #include "res.h"
 #include "utils.h"
 #include "error.h"
+#include "handler.h"
 
 struct host_param{
   char* request;
+  int req_len;
   char* name;
   char have_resolved;
+  int error;
+  ping_handler ph;
 };
 
 static volatile int stop = 0;
@@ -227,7 +231,6 @@ int main(int argc, char *argv[])
   int proxyport = 8080;
   int portnr = 80;
   char *get = NULL;
-  int req_len = 0;
   int c = 0;
   int count = -1, curncount = 0;
   double wait = 1.0;
@@ -248,7 +251,6 @@ int main(int argc, char *argv[])
   int port = 0;
   char resolve_once = 0;
   char auth_mode = 0;
-  char have_resolved = 0;
   int  req_sent = 0;
   double nagios_warn=0.0, nagios_crit=0.0;
   int nagios_exit_code = 2;
@@ -531,8 +533,6 @@ int main(int argc, char *argv[])
     {
       int i = n_hosts - (argc - optind);
       hp[i].name = mystrdup(argv[optind], "host name");
-
-      printf ("hosts[%u]: %s\n", i, hp[i].name); /* FIXME: debug */
       optind++;
     }
 
@@ -607,6 +607,7 @@ int main(int argc, char *argv[])
   /* init variables */
   for(index = 0; index < n_hosts; index++)
     {
+      ph_init(&hp[index].ph, page_size, NULL, NULL); //FIXME
       if (get == NULL) //FIXME: allow get as array of string by default with -g
         {
 #ifndef NO_SSL
@@ -704,7 +705,7 @@ int main(int argc, char *argv[])
         sprintf(&hp[index].request[strlen(hp[index].request)], "Connection: keep-alive\r\n");
 
       strcat(hp[index].request, "\r\n");
-
+      hp[index].req_len = strlen(hp[index].request);
       if (!quiet && !machine_readable && !nagios_mode )
         printf("PING %s:%d (%s):\n", hp[index].name, portnr, get);
       if (get != NULL)
@@ -719,7 +720,6 @@ int main(int argc, char *argv[])
 
   timeout *= 1000;	/* change to ms */
 
-  host = proxyhost?proxyhost:hp[0].name;
   port = proxyhost?proxyport:portnr;
 
   struct sockaddr_in6 addr;
@@ -739,8 +739,8 @@ int main(int argc, char *argv[])
   /*     get_addr(ai_use, &addr); */
   /*   } */
 
-  if (persistent_connections)
-    fd = -1;
+  /* if (persistent_connections) */
+  /*   fd = -1; */
 
   while((curncount < count || count == -1) && stop == 0)
     {
@@ -764,9 +764,9 @@ int main(int argc, char *argv[])
           curncount++;
           for(index = 0; index < n_hosts; index++)
             {
-              req_len = strlen(hp[index].request);
+              host = proxyhost?proxyhost:hp[index].name;
             persistent_loop:
-              if ((!resolve_once || (resolve_once == 1 && have_resolved == 0)) && fd == -1)
+              if ((!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)) && hp[index].ph.fd == -1)
                 {
                   memset(&addr, 0x00, sizeof(addr));
 
@@ -780,65 +780,66 @@ int main(int argc, char *argv[])
                     {
                       err++;
                       emit_error();
+                      hp[index].have_resolved = 1;
+                      hp[index].error = 1;
                       break; //continue?
                     }
 
                   ai_use = select_resolved_host(ai, use_ipv6);
                   get_addr(ai_use, &addr);
-                  have_resolved = 1;
                 }
 
               req_sent = 0;
 
-              if ((persistent_connections && fd < 0) || (!persistent_connections))
+              if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
                 {
-                  fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[0].request, req_len, &req_sent);
+                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
                 }
 
 
-              if (fd == -3)	/* ^C pressed */
-                break;
+              if (hp[index].ph.fd == -3)	/* ^C pressed */
+                break;// continue?
 
-              if (fd < 0)
+              if (hp[index].ph.fd < 0)
                 {
                   emit_error();
-                  fd = -1;
+                  hp[index].ph.fd = -1;
                 }
 
-              if (fd >= 0)
+              if (hp[index].ph.fd >= 0)
                 {
                   /* set socket to low latency */
-                  if (set_tcp_low_latency(fd) == -1)
+                  if (set_tcp_low_latency(hp[index].ph.fd) == -1)
                     {
-                      close(fd);
+                      close(hp[index].ph.fd);
                       fd = -1;
-                      break;
+                      break; //continue?
                     }
 
                   /* set fd blocking */
-                  if (set_fd_blocking(fd) == -1)
+                  if (set_fd_blocking(hp[index].ph.fd) == -1)
                     {
-                      close(fd);
-                      fd = -1;
-                      break;
+                      close(hp[index].ph.fd);
+                      hp[index].ph.fd = -1;
+                      break; //continue?
                     }
 
 #ifndef NO_SSL
                   if (use_ssl && ssl_h == NULL)
                     {
                       BIO *s_bio = NULL;
-                      int rc = connect_ssl(fd, client_ctx, &ssl_h, &s_bio, timeout);
+                      int rc = connect_ssl(hp[index].ph.fd, client_ctx, &ssl_h, &s_bio, timeout);
                       if (rc != 0)
                         {
-                          close(fd);
-                          fd = rc;
+                          close(hp[index].ph.fd);
+                          hp[index].ph.fd = rc;
 
                           if (persistent_connections)
                             {
-                              if (++persistent_tries < 2)
+                              if (++persistent_tries < 2) //FIXME persistent_tries in host_param?
                                 {
-                                  close(fd);
-                                  fd = -1;
+                                  close(hp[index].ph.fd);
+                                  hp[index].ph.fd = -1;
                                   persistent_did_reconnect = 1;
                                   goto persistent_loop;
                                 }
@@ -850,35 +851,35 @@ int main(int argc, char *argv[])
               if (split)
                 dafter_connect = get_ts();
 
-              if (fd < 0)
+              if (hp[index].ph.fd < 0)
                 {
-                  if (fd == -2)
+                  if (hp[index].ph.fd == -2)
                     snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
 
                   emit_error();
                   err++;
 
-                  fd = -1;
+                  hp[index].ph.fd = -1;
 
-                  break;
+                  break; //continue ?
                 }
             }
 
-
-          req_len = strlen(hp[0].request);
+          //select
+          fd = hp[2].ph.fd;
 #ifndef NO_SSL
           if (use_ssl)
-            rc = WRITE_SSL(ssl_h, hp[0].request, req_len);
+            rc = WRITE_SSL(ssl_h, hp[0].request, hp[0].req_len);
           else
 #endif
             {
               if(!req_sent)
-                rc = mywrite(fd, hp[0].request, req_len, timeout);
+                rc = mywrite(fd, hp[0].request, hp[0].req_len, timeout);
               else
-                rc = req_len;
+                rc = hp[0].req_len;
             }
 
-          if (rc != req_len)
+          if (rc != hp[0].req_len)
             {
               if (persistent_connections)
                 {
