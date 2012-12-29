@@ -787,16 +787,18 @@ int main(int argc, char *argv[])
                   get_addr(ai_use, &hp[index].addr);
                 }
 
-              /* req_sent = 0; */
+              req_sent = 0;
 
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
                 {
                   printf("host: %s, connet again\n", hp[index].name);
-                  if (hp[index].ph.fd < 0)
-                      hp[index].ph.state = 1;
                   hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
-                  if(hp[index].ph.state == 1)
+                  if (hp[index].ph.state == 0)
+                    {
+                      hp[index].ph.state = 1;
                       FD_SET(hp[index].ph.fd, &wr); //ready to send
+                      printf("host %s set to state 1\n", hp[index].name);
+                    }
                 }
 
 
@@ -837,7 +839,7 @@ int main(int argc, char *argv[])
                       hp[index].ph.fd = -1;
                       hp[index].error = 1;
                       printf("break to change!\n");
-                      break; //continue?
+                      continue; //FIXME it was break, think about it
                     }
 
 #ifndef NO_SSL
@@ -881,8 +883,6 @@ int main(int argc, char *argv[])
               /*   } */
             }
 
-          //select
-
           select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL); //FIXME: manage errors
           for (index = 0; index < n_hosts; index++)
             {
@@ -895,10 +895,10 @@ int main(int argc, char *argv[])
                   else
 #endif
                     {
-                      /* if(!req_sent) */
+                      if(!req_sent)
                         rc = mywrite(fd, hp[index].request, hp[index].req_len, timeout);
-                      /* else */
-                      /*   rc = hp[index].req_len; */
+                      else
+                        rc = hp[index].req_len;
                     }
 
                   if (rc != hp[index].req_len)
