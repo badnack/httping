@@ -884,9 +884,6 @@ int main(int argc, char *argv[])
         {
           if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
             {
-              if(persistent_connections)
-                hp[index].dstart = get_ts();
-
 #ifndef NO_SSL
               if (use_ssl)
                 rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
@@ -1027,7 +1024,7 @@ int main(int argc, char *argv[])
                 }
 
               ok++;
-              hp[index].ph.state = ((persistent_connections && hp[index].ph.fd>=0)) ? 1 : 0;
+              hp[index].ph.state = 0;
 
               if (get_instead_of_head && show_Bps)
                 {
