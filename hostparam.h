@@ -28,6 +28,7 @@ struct host_param{
   double dstart, dend;
   struct sockaddr_in6 addr;
   ping_handler ph;
+  int fatal;
 };
 
 int hp_max_fd(host_param *hp, int n);

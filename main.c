@@ -256,7 +256,6 @@ int main(int argc, char *argv[])
   long long int Bps_avg = 0;
   int Bps_limit = -1;
   char show_bytes_xfer = 0, show_fp = 0;
-  int fd = -1;
   SSL *ssl_h = NULL;
   struct sockaddr_in *bind_to = NULL;
   struct sockaddr_in bind_to_4;
@@ -757,7 +756,7 @@ int main(int argc, char *argv[])
       goto_loop = 0;
       for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
         {
-          if (hp[index].ph.state == 0)
+          if (hp[index].ph.state == 0 && !hp[index].fatal)
             {
               hp[index].dstart = get_ts();
               host = proxyhost ? proxyhost : hp[index].name;
@@ -777,8 +776,6 @@ int main(int argc, char *argv[])
                       err++;
                       emit_error();
                       hp[index].have_resolved = 1;
-                      hp[index].error = 1;
-                      printf("break to change!\n");
                       continue;
                     }
 
@@ -795,18 +792,13 @@ int main(int argc, char *argv[])
 
 
               if (hp[index].ph.fd == -3)
-                {	/* ^C pressed */
-                  printf("break to change!\n");
-                  hp[index].error = 1;
                   continue;
-                }
 
               if (hp[index].ph.fd < 0)
                 {
                   emit_error();
                   hp[index].ph.fd = -1;
-                  printf("break to change!\n");
-                  continue; //FIXME it was break, think about it
+                  continue;
                 }
 
               if (hp[index].ph.fd >= 0)
@@ -816,9 +808,7 @@ int main(int argc, char *argv[])
                     {
                       close(hp[index].ph.fd);
                       hp[index].ph.fd = -1;
-                      hp[index].error = 1;
-                      printf("break to change!\n");
-                      continue; //FIXME it was break, think about it
+                      continue;
                     }
 
                   /* set fd blocking */
@@ -826,9 +816,7 @@ int main(int argc, char *argv[])
                     {
                       close(hp[index].ph.fd);
                       hp[index].ph.fd = -1;
-                      hp[index].error = 1;
-                      printf("break to change!\n");
-                      continue; //FIXME it was break, think about it
+                      continue;
                     }
 
 #ifndef NO_SSL
@@ -868,39 +856,37 @@ int main(int argc, char *argv[])
                   emit_error();
                   hp[index].ph.state = 0;
                   hp[index].ph.fd = -1;
-                  hp[index].error = 1;
                   continue;
                 }
-            }
+            } // end state == 0
 
-          //states
-          if(hp[index].error)
+          //states 
+          if(hp[index].ph.state == 0) // request connection again
             {
               FD_CLR(hp[index].ph.fd, &rd);
               FD_CLR(hp[index].ph.fd, &wr);
             }
-          else
-            {
-              if(hp[index].ph.state == 2)
-                FD_SET(hp[index].ph.fd, &rd); //ready to receive
-              else if(hp[index].ph.state == 1)
-                FD_SET(hp[index].ph.fd, &wr); //ready to write
-            }
+          else if(hp[index].ph.state == 1) // ready to write
+            FD_SET(hp[index].ph.fd, &wr);         
+          else if(hp[index].ph.state == 2) // ready to read
+            FD_SET(hp[index].ph.fd, &rd);
 
           if (goto_loop)
             {
               goto_loop = 0;
               break;
             }
-        }
+        } // end for
 
-      select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL); //FIXME: manage errors
+      select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL);
 
       for (index = 0; index < n_hosts; index++)
         {
           if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
             {
-              fd = hp[index].ph.fd;
+              if(persistent_connections)
+                hp[index].dstart = get_ts();
+
 #ifndef NO_SSL
               if (use_ssl)
                 rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
@@ -908,7 +894,7 @@ int main(int argc, char *argv[])
 #endif
                 {
                   if(!req_sent)
-                    rc = mywrite(fd, hp[index].request, hp[index].req_len, timeout);
+                    rc = mywrite(hp[index].ph.fd, hp[index].request, hp[index].req_len, timeout);
                   else
                     rc = hp[index].req_len;
                 }
@@ -919,7 +905,7 @@ int main(int argc, char *argv[])
                     {
                       if (++persistent_tries < 2)
                         {
-                          close(fd);
+                          close(hp[index].ph.fd);
                           persistent_did_reconnect = 1;
                           hp[index].ph.fd = -1;
                           hp[index].ph.state = 0;
@@ -939,10 +925,10 @@ int main(int argc, char *argv[])
 
                   emit_error();
 
-                  close(fd);
-                  fd = -1;
-                  err++;
+                  close(hp[index].ph.fd);
+                  hp[index].ph.fd = -1;
                   hp[index].ph.state = 0;
+                  err++;
                   continue; // FIXME NO BREAK!!
                 }
               hp[index].ph.state = 2;
@@ -950,9 +936,8 @@ int main(int argc, char *argv[])
 
           else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
-              fd = hp[index].ph.fd;
-              rc = get_HTTP_headers(fd, ssl_h, &reply, &overflow, timeout);
-              printf("host eneterd: %s\n", hp[index].name);
+              printf("recv host %s\n", hp[index].name);
+              rc = get_HTTP_headers(hp[index].ph.fd, ssl_h, &reply, &overflow, timeout);
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
                   /* statuscode is in first line behind
@@ -1000,10 +985,10 @@ int main(int argc, char *argv[])
                     {
                       snprintf(last_error, ERROR_BUFFER_SIZE, "'Content-Length'-header missing!\n");
                       emit_error();
-                      close(fd);
-                      fd = -1;
+                      close(hp[index].ph.fd);
+                      hp[index].ph.fd = -1;
                       hp[index].ph.state = 0;
-                      break;
+                      continue;
                     }
                   len = atoi(&length[17]);
                 }
@@ -1018,7 +1003,7 @@ int main(int argc, char *argv[])
                     {
                       if (++persistent_tries < 2)
                         {
-                          close(fd);
+                          close(hp[index].ph.fd);
                           hp[index].ph.state = 0;
                           hp[index].ph.fd = -1;
                           persistent_did_reconnect = 1;
@@ -1034,11 +1019,11 @@ int main(int argc, char *argv[])
 
                   emit_error();
 
-                  close(fd);
-                  fd = -1;
-                  err++;
+                  close(hp[index].ph.fd);
+                  hp[index].ph.fd = -1;
                   hp[index].ph.state = 0;
-                  break;
+                  err++;
+                  continue;
                 }
 
               ok++;
@@ -1055,15 +1040,18 @@ int main(int argc, char *argv[])
                         cur_limit = len - overflow;
                     }
 
-                  for(;;)
+                  while(!hp[index].fatal)
                     {
                       int n = cur_limit != -1 ? min(cur_limit - bytes_transferred, page_size) : page_size;
-                      int rc = read(fd, buffer, n);
+                      int rc = read(hp[index].ph.fd, buffer, n);
 
                       if (rc == -1)
                         {
                           if (errno != EINTR && errno != EAGAIN)
-                            error_exit("read failed");
+                            {
+                              hp[index].fatal = 1;
+                              break;
+                            }
                         }
                       else if (rc == 0)
                         break;
@@ -1074,6 +1062,13 @@ int main(int argc, char *argv[])
                         break;
                     }
 
+                  if(hp[index].fatal)
+                    {
+                      close(hp[index].ph.fd);
+                      hp[index].ph.fd = -1;
+                      hp[index].ph.state = 0;
+                      continue;
+                    }
                   dl_end = get_ts();
 
                   Bps = bytes_transferred / max(dl_end - dl_start, 0.000001);
@@ -1082,7 +1077,7 @@ int main(int argc, char *argv[])
                   Bps_avg += Bps;
                 }
 
-              hp[index].dend = (get_ts() - (double)(wait)/2); /* it compensates the timeout options */
+              hp[index].dend = (get_ts() - (double)wait/2); /* it compensates the timeout options */
 
 #ifndef NO_SSL
               if (use_ssl && !persistent_connections)
@@ -1092,7 +1087,7 @@ int main(int argc, char *argv[])
                       fp = get_fingerprint(ssl_h);
                     }
 
-                  if (close_ssl_connection(ssl_h, fd) == -1)
+                  if (close_ssl_connection(ssl_h, hp[index].ph.fd) == -1)
                     {
                       snprintf(last_error, ERROR_BUFFER_SIZE, "error shutting down ssl\n");
                       emit_error();
@@ -1105,8 +1100,8 @@ int main(int argc, char *argv[])
 
               if (!persistent_connections)
                 {
-                  close(fd);
-                  fd = hp[index].ph.fd = -1;
+                  close(hp[index].ph.fd);
+                  hp[index].ph.fd = -1;
                 }
 
               ms = (hp[index].dend - hp[index].dstart) * 1000.0;
@@ -1204,13 +1199,13 @@ int main(int argc, char *argv[])
                 }
 
               free(sc);
+              fflush(NULL);
             }// end read condition
         }// for select
-
-      fflush(NULL);
+      
       if (curncount != count && !stop)
-        usleep((useconds_t)(wait * 500000.0));
-
+        usleep((useconds_t)(wait * 500000.0));              
+      
     }
 
   if (ok)
