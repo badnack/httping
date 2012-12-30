@@ -761,7 +761,7 @@ int main(int argc, char *argv[])
           goto_loop = 0;
           for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
             {
-              if(hp[index].ph.state == 2)
+              if (hp[index].ph.state)
                 continue;
               host = proxyhost?proxyhost:hp[index].name;
             persistent_loop:
@@ -782,7 +782,7 @@ int main(int argc, char *argv[])
                       hp[index].have_resolved = 1;
                       hp[index].error = 1;
                       printf("break to change!\n");
-                      break; //continue?
+                      continue; //FIXME it was break, think about it
                     }
 
                   ai_use = select_resolved_host(ai, use_ipv6);
@@ -798,7 +798,7 @@ int main(int argc, char *argv[])
                   if (hp[index].ph.state == 0)
                     {
                       hp[index].ph.state = 1;
-                      FD_CLR(hp[index].ph.fd, &wr); //ready to send
+                      FD_CLR(hp[index].ph.fd, &rd); //ready to send
                       FD_SET(hp[index].ph.fd, &wr); //ready to send
                       printf("host %s set to state 1\n", hp[index].name);
                     }
@@ -820,7 +820,7 @@ int main(int argc, char *argv[])
                     snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
                   err++;
                   printf("break to change!\n");
-                  break; //continue ?
+                  continue; //FIXME it was break, think about it
                 }
 
               if (hp[index].ph.fd >= 0)
@@ -832,7 +832,7 @@ int main(int argc, char *argv[])
                       fd = -1;
                       hp[index].error = 1;
                       printf("break to change!\n");
-                      break; //continue?
+                      continue; //FIXME it was break, think about it
                     }
 
                   /* set fd blocking */
@@ -1046,9 +1046,10 @@ int main(int argc, char *argv[])
                     }
 
                   ok++;
-                  hp[index].ph.state = 1;
+                  hp[index].ph.state = ((persistent_connections && hp[index].ph.fd)) ? 1 : 0;
                   FD_CLR(hp[index].ph.fd, &rd);
                   FD_SET(hp[index].ph.fd, &wr); //ready to send
+
                   if (get_instead_of_head && show_Bps)
                     {
                       double dl_start = get_ts(), dl_end;
@@ -1210,6 +1211,7 @@ int main(int argc, char *argv[])
 
                   free(sc);
                   /* break; // return to while */
+                  /* hp[index].ph.state = 0; */
                 }// end read condition
 
             }// for select
