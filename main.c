@@ -1099,12 +1099,6 @@ int main(int argc, char *argv[])
                     }
 
                   hp[index].dend = (get_ts() - (double)(wait));
-                  
-                  printf("get_ts: %f\n", get_ts());
-                  printf("wait: %f\n", wait * 1000000.0);
-                  printf("end: %f\n", hp[index].dend);
-                  printf("start: %f\n", hp[index].dstart);
-                  printf("diff: %f", hp[index].dend - hp[index].dstart);
 
 #ifndef NO_SSL
                   if (use_ssl && !persistent_connections)
