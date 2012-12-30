@@ -760,7 +760,7 @@ int main(int argc, char *argv[])
           goto_loop = 0;
           for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
             {
-              if (hp[index].ph.state == 0)
+              if (hp[index].ph.state == 0 && !hp[index].error)
                 {
                   hp[index].dstart = get_ts();
                   host = proxyhost?proxyhost:hp[index].name;
@@ -793,22 +793,7 @@ int main(int argc, char *argv[])
 
                   if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
                     {
-                      printf("host: %s, connet again\n", hp[index].name);
                       hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
-                      if(req_sent)
-                        {
-                          hp[index].ph.state =  2;
-                          /* FD_CLR(hp[index].ph.fd, &wr); */
-                          FD_SET(hp[index].ph.fd, &rd); //ready to receive                                           
-                          printf("host %s set to state 2, fd: %i\n", hp[index].name, hp[index].ph.fd);
-                        }
-                      else
-                        {
-                          hp[index].ph.state =  1;
-                          /* FD_CLR(hp[index].ph.fd, &rd); //ready to send */
-                          FD_SET(hp[index].ph.fd, &wr); //ready to send   
-                          printf("host %s set to state 1, fd: %i\n", hp[index].name, hp[index].ph.fd);
-                        }
                     }
 
 
@@ -821,11 +806,7 @@ int main(int argc, char *argv[])
                     {
                       emit_error();
                       hp[index].ph.fd = -1;
-                      hp[index].ph.state = 0;
                       hp[index].error = 1;
-                      if (hp[index].ph.fd == -2)
-                        snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
-                      err++;
                       printf("break to change!\n");
                       continue; //FIXME it was break, think about it
                     }
@@ -868,7 +849,6 @@ int main(int argc, char *argv[])
                                     {
                                       close(hp[index].ph.fd);
                                       hp[index].ph.fd = -1;
-                                      hp[index].ph.state = 0;
                                       persistent_did_reconnect = 1;
                                       printf("goto loop\n");
                                       goto_loop = 1;
@@ -878,6 +858,7 @@ int main(int argc, char *argv[])
                             }
                         }
 #endif
+                      hp[index].ph.state = (req_sent) ? 2 : 1;
                     }
                   if (split)
                     dafter_connect = get_ts();
@@ -887,26 +868,39 @@ int main(int argc, char *argv[])
                       goto_loop = 0;
                       break;
                     }
-                  /* if (hp[index].ph.fd < 0) */
-                  /*   { */
-                  /*     if (hp[index].ph.fd == -2) */
-                  /*       snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n"); */
-                  /*     emit_error(); */
-                  /*     hp[index].ph.state = 0; */
-                  /*     hp[index].ph.fd = -1; */
-                  /*     hp[index].error = 1; */
-                  /*     break; //continue ? */
-                  /*   } */
+
+                  if (hp[index].ph.fd < 0)
+                    {
+                      if (hp[index].ph.fd == -2)
+                        snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
+                      emit_error();
+                      hp[index].ph.state = 0;
+                      hp[index].ph.fd = -1;
+                      hp[index].error = 1;
+                      break; // FIXME continue ?
+                    }
+                }
+
+              if(hp[index].error)
+                {
+                  FD_CLR(hp[index].ph.fd, &rd);
+                  FD_CLR(hp[index].ph.fd, &rd);
+                }
+              else
+                {
+                  if(hp[index].ph.state == 2)
+                    FD_SET(hp[index].ph.fd, &rd); //ready to receive
+                  else if(hp[index].ph.state == 1)
+                    FD_SET(hp[index].ph.fd, &wr); //ready to write
                 }
             }
-          
+
           select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL); //FIXME: manage errors
           for (index = 0; index < n_hosts; index++)
             {
               if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
                 {
                   fd = hp[index].ph.fd;
-
 #ifndef NO_SSL
                   if (use_ssl)
                     rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
@@ -955,8 +949,6 @@ int main(int argc, char *argv[])
                       break; // FIXME NO BREAK!!
                     }
                   hp[index].ph.state = 2;
-                  /* FD_CLR(hp[index].ph.fd, &wr); */
-                  FD_SET(hp[index].ph.fd, &rd); //ready to read
                 }
 
               else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
@@ -1057,8 +1049,6 @@ int main(int argc, char *argv[])
 
                   ok++;
                   hp[index].ph.state = ((persistent_connections && hp[index].ph.fd>=0)) ? 1 : 0;
-                  /* FD_CLR(hp[index].ph.fd, &rd); */
-                  FD_SET(hp[index].ph.fd, &wr); //ready to send
 
                   if (get_instead_of_head && show_Bps)
                     {
@@ -1098,7 +1088,7 @@ int main(int argc, char *argv[])
                       Bps_avg += Bps;
                     }
 
-                  hp[index].dend = (get_ts() - (double)(wait));
+                  hp[index].dend = (get_ts() - (double)(wait)/2); /* it compensates the timeout options */
 
 #ifndef NO_SSL
                   if (use_ssl && !persistent_connections)
@@ -1224,9 +1214,9 @@ int main(int argc, char *argv[])
                 }// end read condition
 
             }// for select
-          
+
           if (curncount != count && !stop)
-            usleep((useconds_t)(wait * 1000000.0));
+            usleep((useconds_t)(wait * 500000.0));
 
           break;
         }// for(;;)
