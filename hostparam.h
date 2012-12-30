@@ -14,6 +14,8 @@
 */
 
 #include "handler.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 typedef struct host_param host_param;
 
@@ -23,6 +25,7 @@ struct host_param{
   char* name;
   char have_resolved;
   int error;
+  double dstart, dend;
   struct sockaddr_in6 addr;
   ping_handler ph;
 };
