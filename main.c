@@ -884,6 +884,10 @@ int main(int argc, char *argv[])
         {
           if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
             {
+              if(get_ts() < hp[index].wait){ //due to wait option
+                hp[index].ph.state = 0;
+                continue;
+              }
 #ifndef NO_SSL
               if (use_ssl)
                 rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
@@ -926,14 +930,13 @@ int main(int argc, char *argv[])
                   hp[index].ph.fd = -1;
                   hp[index].ph.state = 0;
                   err++;
-                  continue; // FIXME NO BREAK!!
+                  continue;
                 }
               hp[index].ph.state = 2;
             }
 
           else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
-              printf("recv host %s\n", hp[index].name);
               rc = get_HTTP_headers(hp[index].ph.fd, ssl_h, &reply, &overflow, timeout);
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
@@ -1074,7 +1077,7 @@ int main(int argc, char *argv[])
                   Bps_avg += Bps;
                 }
 
-              hp[index].dend = (get_ts() - (double)wait/2); /* it compensates the timeout options */
+              hp[index].dend = (get_ts() /* - (double)wait/2 */); /* it compensates the timeout options */
 
 #ifndef NO_SSL
               if (use_ssl && !persistent_connections)
@@ -1144,9 +1147,9 @@ int main(int argc, char *argv[])
                     snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
-                    printf("%s %s:%d (%d/%d bytes), seq=%d ", operation, current_host, portnr, headers_len, len, curncount-1);
+                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, len, curncount-1);
                   else
-                    printf("%s %s:%d (%d bytes), seq=%d ", operation, current_host, portnr, headers_len, curncount-1);
+                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, curncount-1);
 
                   if (split)
                     printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp[index].dstart) * 1000.0, (hp[index].dend - dafter_connect) * 1000.0, ms, sc?sc:"");
@@ -1197,12 +1200,13 @@ int main(int argc, char *argv[])
 
               free(sc);
               fflush(NULL);
+              if (curncount != count && !stop)
+                hp[index].wait = get_ts() + wait;
+                /* usleep((useconds_t)(wait * 500000.0));               */
+
             }// end read condition
         }// for select
-      
-      if (curncount != count && !stop)
-        usleep((useconds_t)(wait * 500000.0));              
-      
+            
     }
 
   if (ok)

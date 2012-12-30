@@ -24,8 +24,7 @@ struct host_param{
   int req_len;
   char* name;
   char have_resolved;
-  int error;
-  double dstart, dend;
+  double dstart, dend, wait;
   struct sockaddr_in6 addr;
   ping_handler ph;
   int fatal;
