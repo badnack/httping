@@ -219,6 +219,7 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 int main(int argc, char *argv[])
 {
   int n_hosts = 0;
+  int goto_loop;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
   int portnr = 80;
@@ -757,6 +758,7 @@ int main(int argc, char *argv[])
           int len = 0, overflow = 0, headers_len;
 
           curncount++;
+          goto_loop = 0;
           for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
             {
               if(hp[index].ph.state == 2)
@@ -796,6 +798,7 @@ int main(int argc, char *argv[])
                   if (hp[index].ph.state == 0)
                     {
                       hp[index].ph.state = 1;
+                      FD_CLR(hp[index].ph.fd, &wr); //ready to send
                       FD_SET(hp[index].ph.fd, &wr); //ready to send
                       printf("host %s set to state 1\n", hp[index].name);
                     }
@@ -861,6 +864,7 @@ int main(int argc, char *argv[])
                                   hp[index].ph.state = 0;
                                   persistent_did_reconnect = 1;
                                   printf("goto loop\n");
+                                  goto_loop = 1;
                                   goto persistent_loop;
                                 }
                             }
@@ -871,6 +875,11 @@ int main(int argc, char *argv[])
               if (split)
                 dafter_connect = get_ts();
 
+              if(goto_loop)
+                {
+                  goto_loop = 0;
+                  break;
+                }
               /* if (hp[index].ph.fd < 0) */
               /*   { */
               /*     if (hp[index].ph.fd == -2) */
@@ -912,6 +921,7 @@ int main(int argc, char *argv[])
                               hp[index].ph.fd = -1;
                               hp[index].ph.state = 0;
                               printf("goto loop\n");
+                              goto_loop = 1;
                               goto persistent_loop;
                             }
                         }
@@ -1015,6 +1025,7 @@ int main(int argc, char *argv[])
                               hp[index].ph.fd = -1;
                               persistent_did_reconnect = 1;
                               printf("goto loop\n");
+                              goto_loop = 1;
                               goto persistent_loop;
                             }
                         }
