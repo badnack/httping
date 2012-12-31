@@ -761,8 +761,11 @@ int main(int argc, char *argv[])
 
   /* struct sockaddr_in6 addr; */
   struct addrinfo *ai = NULL, *ai_use;
-
   double started_at = get_ts();
+  struct timeval to;
+
+  to.tv_sec = wait + 5;
+  to.tv_usec = 0;
   /* if (resolve_once) */
   /*   { */
   /*     if (resolve_host(host, &ai, use_ipv6, port) == -1) */
@@ -788,7 +791,7 @@ int main(int argc, char *argv[])
       char is_compressed = 0;
       long long int bytes_transferred = 0;
       char *fp = NULL;
-      int rc;
+      int rc, ret;
       char *sc = NULL, *scdummy = NULL;
       int len = 0, overflow = 0, headers_len;
 
@@ -918,7 +921,12 @@ int main(int argc, char *argv[])
             }
         }//end for
 
-      select(max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL);
+      if ((ret = select(max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
+        {
+          if (ret == 0)
+            error_exit("No more hosts available\n");
+          error_exit("System error\n");
+        }
 
       for (index = 0; index < n_hosts; index++)
         {
@@ -1122,7 +1130,7 @@ int main(int argc, char *argv[])
                   hp[index].Bps_avg += Bps;
                 }
 
-              hp[index].dend = (get_ts() /* - (double)wait/2 */); /* it compensates the timeout options */
+              hp[index].dend = get_ts();
 
 #ifndef NO_SSL
               if (use_ssl && !persistent_connections)
