@@ -752,13 +752,11 @@ int main(int argc, char *argv[])
       int persistent_tries = 0;
       int len = 0, overflow = 0, headers_len;
 
-      curncount++;
       goto_loop = 0;
       for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
         {
           if (hp[index].ph.state == 0 && !hp[index].fatal)
             {
-              hp[index].dstart = get_ts();
               host = proxyhost ? proxyhost : hp[index].name;
             persistent_loop:
               if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
@@ -788,6 +786,7 @@ int main(int argc, char *argv[])
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
                 {
                   hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
+                  hp[index].dstart = get_ts();
                 }
 
 
@@ -884,10 +883,8 @@ int main(int argc, char *argv[])
         {
           if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
             {
-              if(get_ts() < hp[index].wait){ //due to wait option
-                hp[index].ph.state = 0;
+              if(get_ts() < hp[index].wait) //due to wait option
                 continue;
-              }
 #ifndef NO_SSL
               if (use_ssl)
                 rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
@@ -895,7 +892,10 @@ int main(int argc, char *argv[])
 #endif
                 {
                   if(!req_sent)
-                    rc = mywrite(hp[index].ph.fd, hp[index].request, hp[index].req_len, timeout);
+                    {
+                      hp[index].dstart = get_ts();
+                      rc = mywrite(hp[index].ph.fd, hp[index].request, hp[index].req_len, timeout);
+                    }
                   else
                     rc = hp[index].req_len;
                 }
@@ -937,6 +937,7 @@ int main(int argc, char *argv[])
 
           else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
+              curncount++;
               rc = get_HTTP_headers(hp[index].ph.fd, ssl_h, &reply, &overflow, timeout);
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
