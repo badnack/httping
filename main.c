@@ -218,7 +218,7 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-  int n_hosts = 0;
+  int n_hosts = 0, wait_read = 0;
   int goto_loop;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
@@ -757,6 +757,7 @@ int main(int argc, char *argv[])
         {
           if (hp[index].ph.state == 0 && !hp[index].fatal)
             {
+              /* hp[index].dstart = get_ts(); */
               host = proxyhost ? proxyhost : hp[index].name;
             persistent_loop:
               if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
@@ -785,8 +786,8 @@ int main(int argc, char *argv[])
 
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
                 {
-                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
                   hp[index].dstart = get_ts();
+                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
                 }
 
 
@@ -859,14 +860,15 @@ int main(int argc, char *argv[])
                 }
             } // end state == 0
 
-          //states 
+          //states
           if(hp[index].ph.state == 0) // request connection again
             {
               FD_CLR(hp[index].ph.fd, &rd);
               FD_CLR(hp[index].ph.fd, &wr);
             }
-          else if(hp[index].ph.state == 1) // ready to write
-            FD_SET(hp[index].ph.fd, &wr);         
+          else if(hp[index].ph.state == 1){ // ready to write
+            FD_SET(hp[index].ph.fd, &wr);
+          }
           else if(hp[index].ph.state == 2) // ready to read
             FD_SET(hp[index].ph.fd, &rd);
 
@@ -932,12 +934,14 @@ int main(int argc, char *argv[])
                   err++;
                   continue;
                 }
+              wait_read++;
               hp[index].ph.state = 2;
             }
 
           else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
               curncount++;
+              wait_read--;
               rc = get_HTTP_headers(hp[index].ph.fd, ssl_h, &reply, &overflow, timeout);
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
@@ -1203,12 +1207,14 @@ int main(int argc, char *argv[])
               fflush(NULL);
               if (curncount != count && !stop)
                 hp[index].wait = get_ts() + wait;
-                /* usleep((useconds_t)(wait * 500000.0));               */
-
             }// end read condition
         }// for select
-            
-    }
+      
+      if (!wait_read && curncount != count && !stop){
+        usleep((useconds_t)(wait * 1000000.0));
+      }
+    
+}// for while
 
   if (ok)
     avg_httping_time = avg / (double)ok;
