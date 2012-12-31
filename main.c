@@ -65,6 +65,7 @@ struct host_param{
   int Bps_min, Bps_max;
   long long int Bps_avg;
   double avg, min, max;
+  double avg_httping_time;
   int curncount;
   char* name;
   char have_resolved;
@@ -289,7 +290,6 @@ int main(int argc, char *argv[])
   int  req_sent = 0;
   double nagios_warn=0.0, nagios_crit=0.0;
   int nagios_exit_code = 2;
-  double avg_httping_time = -1.0;
   int get_instead_of_head = 0;
   char *buffer = NULL;
   int page_size = sysconf(_SC_PAGESIZE);
@@ -309,6 +309,7 @@ int main(int argc, char *argv[])
   int tfo = 0;
   int index;
   fd_set rd, wr;
+  int type_err;
 
   static struct option long_options[] =
     {
@@ -643,6 +644,7 @@ int main(int argc, char *argv[])
     {
       hp[index].min = 999999999999999.0;
       hp[index].Bps_min = 1 << 30;
+      hp[index].avg_httping_time = -1.0;
       ph_init(&hp[index].ph, page_size, NULL, NULL); //FIXME
       if (get == NULL) //FIXME: allow get as array of string by default with -g
         {
@@ -684,7 +686,7 @@ int main(int argc, char *argv[])
             {
               snprintf(last_error, ERROR_BUFFER_SIZE, "problem creating SSL context\n");
               hp[index].fatal = 1;
-              goto error_exit;
+              continue;
             }
         }
 #endif
@@ -1267,11 +1269,11 @@ int main(int argc, char *argv[])
   for(index = 0; index < n_hosts; index++)
     {
       if (hp[index].ok){
-        avg_httping_time = hp[index].avg / (double)hp[index].ok;
+        hp[index].avg_httping_time = hp[index].avg / (double)hp[index].ok;
         ok++;
       }
       else
-        avg_httping_time = -1.0;
+        hp[index].avg_httping_time = -1.0;
 
       double total_took = get_ts() - started_at;
       if (!quiet && !machine_readable && !nagios_mode)
@@ -1288,7 +1290,7 @@ int main(int argc, char *argv[])
 
           if (hp[index].ok > 0)
             {
-              printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp[index].min, avg_httping_time, hp[index].max);
+              printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp[index].min, hp[index].avg_httping_time, hp[index].max);
 
               if (show_Bps)
                 printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", hp[index].Bps_min / 1024, (int)(hp[index].Bps_avg / hp[index].ok) / 1024, hp[index].Bps_max / 1024);
@@ -1296,49 +1298,76 @@ int main(int argc, char *argv[])
         }
     }
 
- error_exit: //FIXME
-  /* if (nagios_mode == 1) */
-  /*   { */
-  /*     if (ok == 0) */
-  /*       { */
-  /*         printf("CRITICAL - connecting failed: %s", last_error); */
-  /*         return 2; */
-  /*       } */
-  /*     else if (avg_httping_time >= nagios_crit) */
-  /*       { */
-  /*         printf("CRITICAL - average httping-time is %.1f\n", avg_httping_time); */
-  /*         return 2; */
-  /*       } */
-  /*     else if (avg_httping_time >= nagios_warn) */
-  /*       { */
-  /*         printf("WARNING - average httping-time is %.1f\n", avg_httping_time); */
-  /*         return 1; */
-  /*       } */
-
-  /*     printf("OK - average httping-time is %.1f (%s)|ping=%f\n", avg_httping_time, last_error, avg_httping_time); */
-  /*   } */
-  /* else if (nagios_mode == 2) */
-  /*   { */
-  /*     if (ok && last_error[0] == 0x00) */
-  /*       { */
-  /*         printf("OK - all fine, avg httping time is %.1f|ping=%f\n", avg_httping_time, avg_httping_time); */
-  /*         return 0; */
-  /*       } */
-
-  /*     printf("%s: - failed: %s", nagios_exit_code == 1?"WARNING":(nagios_exit_code == 2?"CRITICAL":"ERROR"), last_error); */
-  /*     return nagios_exit_code; */
-  /*   } */
-
+  ok = 0;
+  type_err = 0;
   freeaddrinfo(ai);
   free(buffer);
   free(getcopyorg);
-  while (n_hosts > 0)
+
+  for(index = 0; index < n_hosts; index++)
     {
-      free(hp[n_hosts-1].request);
-      free(hp[n_hosts-1].name);
-      n_hosts--;
+      free(hp[index].request);
+      free(hp[index].name);
+
+      if(type_err != 0) //there was at least one error
+        continue;
+
+      if (nagios_mode == 1)
+        {
+          if (hp[index].ok == 0) //connection not valid
+            continue;
+          else if (hp[index].avg_httping_time >= nagios_crit)
+              type_err = 2;
+          else if (hp[index].avg_httping_time >= nagios_warn)
+              type_err = 1;
+          ok = 1; // one valid connection
+        }
+      else if (nagios_mode == 2)
+        {
+          if (hp[index].ok && last_error[0] == 0x00)
+            type_err = 0;
+          else
+            type_err = 1;
+        }
+      else if(hp[index].ok)
+        ok = 1;
     }
+
   free(hp);
+
+  if (nagios_mode == 1)
+    {
+      if (!ok)
+        {
+          printf("CRITICAL - all connections have failed: %s", last_error);
+          return 2;
+        }
+
+      switch(type_err)
+        {
+        case 1:
+          printf("WARNING - average httping-time is %.1f\n", hp[index].avg_httping_time);
+          return 1;
+        case 2:
+          printf("CRITICAL - average httping-time is %.1f\n", hp[index].avg_httping_time);
+          return 2;
+        default: /* OK */
+          printf("OK - average httping-time is %.1f (%s)|ping=%f\n", hp[index].avg_httping_time, last_error, hp[index].avg_httping_time);
+          break;
+        }
+    }
+  else if (nagios_mode == 2)
+    {
+      switch(type_err)
+        {
+        case 0:
+          printf("OK - all fine, avg httping time is %.1f|ping=%f\n", hp[index].avg_httping_time, hp[index].avg_httping_time);
+          break;
+        default:
+          printf("%s: - failed: %s", nagios_exit_code == 1?"WARNING":(nagios_exit_code == 2?"CRITICAL":"ERROR"), last_error);
+          return nagios_exit_code;
+        }
+    }
 
   if (ok)
     return 0;
