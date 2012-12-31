@@ -13,6 +13,11 @@
    files in the program, then also delete it here.
 */
 
+/*
+  FIXME: 
+  * curncount behaviour
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -40,8 +45,9 @@
 #include "res.h"
 #include "utils.h"
 #include "error.h"
-/* #include "handler.h" */
-#include "hostparam.h"
+#include "handler.h"
+
+typedef struct host_param host_param;
 
 static volatile int stop = 0;
 
@@ -51,6 +57,23 @@ char machine_readable = 0;
 char nagios_mode = 0;
 
 char last_error[ERROR_BUFFER_SIZE];
+
+struct host_param{
+  char* request;
+  int req_len;
+  int ok, err;
+  int Bps_min, Bps_max;
+  long long int Bps_avg;
+  double avg, min, max;
+  int curncount;
+  char* name;
+  char have_resolved;
+  double dstart, dend, wait;
+  struct sockaddr_in6 addr;
+  ping_handler ph;
+  int fatal;
+};
+
 
 void version(void)
 {
@@ -152,6 +175,22 @@ void usage(void)
   fprintf(stderr, "--help			-h\n");
 }
 
+int max_fd(host_param *hp, int n)
+{
+  int i, max;
+
+  if (n <= 0)
+    return -1;
+
+  max = hp[0].ph.fd;
+  for(i = 0; i < n; i++)
+    {
+      if (max < hp[i].ph.fd)
+        max = hp[i].ph.fd;
+    }
+  return max;
+}
+
 void emit_error()
 {
   if (!quiet && !machine_readable && !nagios_mode)
@@ -229,7 +268,6 @@ int main(int argc, char *argv[])
   double wait = 1.0;
   int audible = 0;
   int ok = 0, err = 0;
-  double min = 999999999999999.0, avg = 0.0, max = 0.0;
   int timeout=30;
   char show_statuscodes = 0;
   char use_ssl = 0;
@@ -252,8 +290,6 @@ int main(int argc, char *argv[])
   char *buffer = NULL;
   int page_size = sysconf(_SC_PAGESIZE);
   char show_Bps = 0, ask_compression = 0;
-  int Bps_min = 1 << 30, Bps_max = 0;
-  long long int Bps_avg = 0;
   int Bps_limit = -1;
   char show_bytes_xfer = 0, show_fp = 0;
   SSL *ssl_h = NULL;
@@ -603,6 +639,8 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
+      hp[index].min = 999999999999999.0;
+      hp[index].Bps_min = 1 << 30;
       ph_init(&hp[index].ph, page_size, NULL, NULL); //FIXME
       if (get == NULL) //FIXME: allow get as array of string by default with -g
         {
@@ -753,11 +791,10 @@ int main(int argc, char *argv[])
       int len = 0, overflow = 0, headers_len;
 
       goto_loop = 0;
-      for(index = 0; index < n_hosts; index++) //FIXME: this whole block can be resized as state 0 in the switch
+      for(index = 0; index < n_hosts; index++)
         {
           if (hp[index].ph.state == 0 && !hp[index].fatal)
             {
-              /* hp[index].dstart = get_ts(); */
               host = proxyhost ? proxyhost : hp[index].name;
             persistent_loop:
               if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
@@ -772,7 +809,7 @@ int main(int argc, char *argv[])
 
                   if (resolve_host(host, &ai, use_ipv6, port) == -1)
                     {
-                      err++;
+                      hp[index].err++;
                       emit_error();
                       hp[index].have_resolved = 1;
                       continue;
@@ -784,7 +821,7 @@ int main(int argc, char *argv[])
 
               req_sent = 0;
 
-              if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))// change in hp[index].state == 0 ?
+              if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
                 {
                   hp[index].dstart = get_ts();
                   hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
@@ -858,18 +895,18 @@ int main(int argc, char *argv[])
                   hp[index].ph.fd = -1;
                   continue;
                 }
-            } // end state == 0
+            }//end state == 0
 
           //states
-          if(hp[index].ph.state == 0) // request connection again
+          if(hp[index].ph.state == 0)//request connection again
             {
               FD_CLR(hp[index].ph.fd, &rd);
               FD_CLR(hp[index].ph.fd, &wr);
             }
-          else if(hp[index].ph.state == 1){ // ready to write
+          else if(hp[index].ph.state == 1){//ready to write
             FD_SET(hp[index].ph.fd, &wr);
           }
-          else if(hp[index].ph.state == 2) // ready to read
+          else if(hp[index].ph.state == 2)//ready to read
             FD_SET(hp[index].ph.fd, &rd);
 
           if (goto_loop)
@@ -877,9 +914,9 @@ int main(int argc, char *argv[])
               goto_loop = 0;
               break;
             }
-        } // end for
+        }//end for
 
-      select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL);
+      select(max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, NULL);
 
       for (index = 0; index < n_hosts; index++)
         {
@@ -931,7 +968,7 @@ int main(int argc, char *argv[])
                   close(hp[index].ph.fd);
                   hp[index].ph.fd = -1;
                   hp[index].ph.state = 0;
-                  err++;
+                  hp[index].err++;
                   continue;
                 }
               wait_read++;
@@ -940,6 +977,7 @@ int main(int argc, char *argv[])
 
           else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
+              hp[index].curncount++;
               curncount++;
               wait_read--;
               rc = get_HTTP_headers(hp[index].ph.fd, ssl_h, &reply, &overflow, timeout);
@@ -1027,11 +1065,11 @@ int main(int argc, char *argv[])
                   close(hp[index].ph.fd);
                   hp[index].ph.fd = -1;
                   hp[index].ph.state = 0;
-                  err++;
+                  hp[index].err++;
                   continue;
                 }
 
-              ok++;
+              hp[index].ok++;
               hp[index].ph.state = 0;
 
               if (get_instead_of_head && show_Bps)
@@ -1077,9 +1115,9 @@ int main(int argc, char *argv[])
                   dl_end = get_ts();
 
                   Bps = bytes_transferred / max(dl_end - dl_start, 0.000001);
-                  Bps_min = min(Bps_min, Bps);
-                  Bps_max = max(Bps_max, Bps);
-                  Bps_avg += Bps;
+                  hp[index].Bps_min = min(hp[index].Bps_min, Bps);
+                  hp[index].Bps_max = max(hp[index].Bps_max, Bps);
+                  hp[index].Bps_avg += Bps;
                 }
 
               hp[index].dend = (get_ts() /* - (double)wait/2 */); /* it compensates the timeout options */
@@ -1110,9 +1148,9 @@ int main(int argc, char *argv[])
                 }
 
               ms = (hp[index].dend - hp[index].dstart) * 1000.0;
-              avg += ms;
-              min = min > ms ? ms : min;
-              max = max < ms ? ms : max;
+              hp[index].avg += ms;
+              hp[index].min = hp[index].min > ms ? ms : hp[index].min;
+              hp[index].max = hp[index].max < ms ? ms : hp[index].max;
 
               if (machine_readable)
                 {
@@ -1198,8 +1236,8 @@ int main(int argc, char *argv[])
 
                   if (strstr(ok_str, sc) == NULL)
                     {
-                      ok--;
-                      err++;
+                      hp[index].ok--;
+                      hp[index].err++;
                     }
                 }
 
@@ -1209,72 +1247,77 @@ int main(int argc, char *argv[])
                 hp[index].wait = get_ts() + wait;
             }// end read condition
         }// for select
-      
+
       if (!wait_read && curncount != count && !stop){
         usleep((useconds_t)(wait * 1000000.0));
       }
-    
-}// for while
 
-  if (ok)
-    avg_httping_time = avg / (double)ok;
-  else
-    avg_httping_time = -1.0;
+    }// for while
 
-  double total_took = get_ts() - started_at;
-  if (!quiet && !machine_readable && !nagios_mode)
+  for(index = 0; index < n_hosts; index++)
     {
-      printf("--- %s ping statistics ---\n", hp[0].name);
-
-      if (curncount == 0 && err > 0)
-        fprintf(stderr, "internal error! (curncount)\n");
-
-      if (count == -1)
-        printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", curncount, ok, (((double)err) / ((double)curncount)) * 100.0, total_took * 1000.0);
+      if (hp[index].ok){
+        avg_httping_time = hp[index].avg / (double)hp[index].ok;
+        ok++;
+      }
       else
-        printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", curncount, ok, (((double)err) / ((double)count)) * 100.0, total_took * 1000.0);
+        avg_httping_time = -1.0;
 
-      if (ok > 0)
+      double total_took = get_ts() - started_at;
+      if (!quiet && !machine_readable && !nagios_mode)
         {
-          printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", min, avg_httping_time, max);
+          printf("--- %s ping statistics ---\n", hp[index].name);
 
-          if (show_Bps)
-            printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", Bps_min / 1024, (int)(Bps_avg / ok) / 1024, Bps_max / 1024);
+          if (hp[index].curncount == 0 && hp[index].err > 0)
+            fprintf(stderr, "internal error! (curncount)\n");
+
+          if (count == -1)
+            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp[index].curncount, hp[index].ok, (((double)hp[index].err) / ((double)hp[index].curncount)) * 100.0, total_took * 1000.0);
+          else
+            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp[index].curncount, hp[index].ok, (((double)hp[index].err) / ((double)count)) * 100.0, total_took * 1000.0); //FIXME: count
+
+          if (hp[index].ok > 0)
+            {
+              printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp[index].min, avg_httping_time, hp[index].max);
+
+              if (show_Bps)
+                printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", hp[index].Bps_min / 1024, (int)(hp[index].Bps_avg / hp[index].ok) / 1024, hp[index].Bps_max / 1024);
+            }
         }
     }
 
- error_exit:
-  if (nagios_mode == 1)
-    {
-      if (ok == 0)
-        {
-          printf("CRITICAL - connecting failed: %s", last_error);
-          return 2;
-        }
-      else if (avg_httping_time >= nagios_crit)
-        {
-          printf("CRITICAL - average httping-time is %.1f\n", avg_httping_time);
-          return 2;
-        }
-      else if (avg_httping_time >= nagios_warn)
-        {
-          printf("WARNING - average httping-time is %.1f\n", avg_httping_time);
-          return 1;
-        }
+ error_exit: //FIXME
+  /* if (nagios_mode == 1) */
+  /*   { */
+  /*     if (ok == 0) */
+  /*       { */
+  /*         printf("CRITICAL - connecting failed: %s", last_error); */
+  /*         return 2; */
+  /*       } */
+  /*     else if (avg_httping_time >= nagios_crit) */
+  /*       { */
+  /*         printf("CRITICAL - average httping-time is %.1f\n", avg_httping_time); */
+  /*         return 2; */
+  /*       } */
+  /*     else if (avg_httping_time >= nagios_warn) */
+  /*       { */
+  /*         printf("WARNING - average httping-time is %.1f\n", avg_httping_time); */
+  /*         return 1; */
+  /*       } */
 
-      printf("OK - average httping-time is %.1f (%s)|ping=%f\n", avg_httping_time, last_error, avg_httping_time);
-    }
-  else if (nagios_mode == 2)
-    {
-      if (ok && last_error[0] == 0x00)
-        {
-          printf("OK - all fine, avg httping time is %.1f|ping=%f\n", avg_httping_time, avg_httping_time);
-          return 0;
-        }
+  /*     printf("OK - average httping-time is %.1f (%s)|ping=%f\n", avg_httping_time, last_error, avg_httping_time); */
+  /*   } */
+  /* else if (nagios_mode == 2) */
+  /*   { */
+  /*     if (ok && last_error[0] == 0x00) */
+  /*       { */
+  /*         printf("OK - all fine, avg httping time is %.1f|ping=%f\n", avg_httping_time, avg_httping_time); */
+  /*         return 0; */
+  /*       } */
 
-      printf("%s: - failed: %s", nagios_exit_code == 1?"WARNING":(nagios_exit_code == 2?"CRITICAL":"ERROR"), last_error);
-      return nagios_exit_code;
-    }
+  /*     printf("%s: - failed: %s", nagios_exit_code == 1?"WARNING":(nagios_exit_code == 2?"CRITICAL":"ERROR"), last_error); */
+  /*     return nagios_exit_code; */
+  /*   } */
 
   freeaddrinfo(ai);
   free(buffer);
