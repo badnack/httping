@@ -14,7 +14,7 @@
 */
 
 /*
-  FIXME: 
+  FIXME:
   * curncount behaviour
 */
 
@@ -72,6 +72,10 @@ struct host_param{
   struct sockaddr_in6 addr;
   ping_handler ph;
   int fatal;
+  int persistent_tries;
+#ifndef NO_SSL
+  SSL_CTX *client_ctx;
+#endif
 };
 
 
@@ -267,7 +271,7 @@ int main(int argc, char *argv[])
   int count = -1, curncount = 0;
   double wait = 1.0;
   int audible = 0;
-  int ok = 0, err = 0;
+  int ok = 0;
   int timeout=30;
   char show_statuscodes = 0;
   char use_ssl = 0;
@@ -626,8 +630,6 @@ int main(int argc, char *argv[])
     }
 
 #ifndef NO_SSL
-  SSL_CTX *client_ctx = NULL;
-
   if (use_ssl && portnr == 80)
     portnr = 443;
 #endif
@@ -677,10 +679,11 @@ int main(int argc, char *argv[])
 #ifndef NO_SSL
       if (use_ssl)
         {
-          client_ctx = initialize_ctx();
-          if (!client_ctx)
+          hp[index].client_ctx = initialize_ctx();
+          if (!hp[index].client_ctx)
             {
               snprintf(last_error, ERROR_BUFFER_SIZE, "problem creating SSL context\n");
+              hp[index].fatal = 1;
               goto error_exit;
             }
         }
@@ -787,7 +790,6 @@ int main(int argc, char *argv[])
       char *fp = NULL;
       int rc;
       char *sc = NULL, *scdummy = NULL;
-      int persistent_tries = 0;
       int len = 0, overflow = 0, headers_len;
 
       goto_loop = 0;
@@ -860,7 +862,7 @@ int main(int argc, char *argv[])
                   if (use_ssl && ssl_h == NULL)
                     {
                       BIO *s_bio = NULL;
-                      int rc = connect_ssl(hp[index].ph.fd, client_ctx, &ssl_h, &s_bio, timeout);
+                      int rc = connect_ssl(hp[index].ph.fd, hp[index].client_ctx, &ssl_h, &s_bio, timeout);
                       if (rc != 0)
                         {
                           close(hp[index].ph.fd);
@@ -868,7 +870,7 @@ int main(int argc, char *argv[])
 
                           if (persistent_connections)
                             {
-                              if (++persistent_tries < 2) //FIXME persistent_tries in host_param?
+                              if (++hp[index].persistent_tries < 2)
                                 {
                                   close(hp[index].ph.fd);
                                   hp[index].ph.fd = -1;
@@ -943,7 +945,7 @@ int main(int argc, char *argv[])
                 {
                   if (persistent_connections)
                     {
-                      if (++persistent_tries < 2)
+                      if (++hp[index].persistent_tries < 2)
                         {
                           close(hp[index].ph.fd);
                           persistent_did_reconnect = 1;
@@ -1044,7 +1046,7 @@ int main(int argc, char *argv[])
                 {
                   if (persistent_connections)
                     {
-                      if (++persistent_tries < 2)
+                      if (++hp[index].persistent_tries < 2)
                         {
                           close(hp[index].ph.fd);
                           hp[index].ph.state = 0;
