@@ -18,12 +18,6 @@ typedef struct ping_handler ping_handler;
 struct ping_handler{
   int state;
   int fd;
-  int (*f_io[2])(int);
-  int pnt;
-  int size;
-  char* buf;
 };
 
-void ph_init(ping_handler *ph, int size, int(*io_read)(int), int (*io_write)(int));
-void ph_free(ping_handler *ph);
-int ph_max_fd(ping_handler *ph, int n);
+void ph_init(ping_handler *ph);

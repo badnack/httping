@@ -639,7 +639,7 @@ int main(int argc, char *argv[])
       hp[index].min = 999999999999999.0;
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
-      ph_init(&hp[index].ph, page_size, NULL, NULL); //FIXME
+      ph_init(&hp[index].ph);
       if (get == NULL)
         {
 #ifndef NO_SSL
