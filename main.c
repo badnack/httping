@@ -13,11 +13,6 @@
    files in the program, then also delete it here.
 */
 
-/*
-  FIXME:
-  * curncount behaviour
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -561,7 +556,6 @@ int main(int argc, char *argv[])
   /* Multihost args */
   n_hosts = argc - optind;
   hp = (host_param*) calloc(sizeof(host_param), (!n_hosts) ? 1 : n_hosts);
-  /* n_hosts = (!n_hosts) ? 1 : n_hosts; */ //FIXME
 
   while (optind < argc)
     {
@@ -578,7 +572,7 @@ int main(int argc, char *argv[])
   if(tfo && use_ssl)
     error_exit("TCP Fast open and SSL not supported together\n");
 
-  if (get != NULL && /*hostname == NULL*/ !n_hosts)
+  if (get != NULL && !n_hosts)
     {
       char *slash, *colon;
       char *getcopy = mystrdup(get, "get request");
@@ -619,12 +613,12 @@ int main(int argc, char *argv[])
               portnr = atoi(colon + 1);
             }
         }
-
+      // FIXME allow multiple hosts in get
       hp[0].name = getcopy;
       n_hosts = 1;
     }
 
-  if (!n_hosts/*hostname == NULL*/)
+  if (!n_hosts)
     {
       usage();
       error_exit("No hostname/getrequest given\n");
@@ -646,7 +640,7 @@ int main(int argc, char *argv[])
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
       ph_init(&hp[index].ph, page_size, NULL, NULL); //FIXME
-      if (get == NULL) //FIXME: allow get as array of string by default with -g
+      if (get == NULL)
         {
 #ifndef NO_SSL
           if (use_ssl)
@@ -768,21 +762,6 @@ int main(int argc, char *argv[])
 
   to.tv_sec = wait + 5;
   to.tv_usec = 0;
-  /* if (resolve_once) */
-  /*   { */
-  /*     if (resolve_host(host, &ai, use_ipv6, port) == -1) */
-  /*       { */
-  /*         err++; */
-  /*         emit_error(); */
-  /*         have_resolved = 1; */
-  /*       } */
-
-  /*     ai_use = select_resolved_host(ai, use_ipv6); */
-  /*     get_addr(ai_use, &addr); */
-  /*   } */
-
-  /* if (persistent_connections) */
-  /*   fd = -1; */
 
   while((curncount < count || count == -1) && stop == 0)
     {
@@ -905,15 +884,14 @@ int main(int argc, char *argv[])
             }//end state == 0
 
           //states
-          if(hp[index].ph.state == 0)//request connection again
+          if (hp[index].ph.state == 0)//request connection again
             {
               FD_CLR(hp[index].ph.fd, &rd);
               FD_CLR(hp[index].ph.fd, &wr);
             }
-          else if(hp[index].ph.state == 1){//ready to write
+          else if (hp[index].ph.state == 1)//ready to write
             FD_SET(hp[index].ph.fd, &wr);
-          }
-          else if(hp[index].ph.state == 2)//ready to read
+          else if (hp[index].ph.state == 2)//ready to read
             FD_SET(hp[index].ph.fd, &rd);
 
           if (goto_loop)
@@ -934,7 +912,7 @@ int main(int argc, char *argv[])
         {
           if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
             {
-              if(get_ts() < hp[index].wait) //due to wait option
+              if (get_ts() < hp[index].wait)
                 continue;
 #ifndef NO_SSL
               if (use_ssl)
@@ -1197,14 +1175,13 @@ int main(int argc, char *argv[])
                   char current_host[1024];
                   char *operation = !persistent_connections ? "connected to" : "pinged host";
 
-                  /* FIXME store ip during the resolve operation instead of here*/
                   if (getnameinfo((const struct sockaddr *)&hp[index].addr, sizeof(hp[index].addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) == -1)
                     snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
-                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, len, curncount-1);
+                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, len, hp[index].curncount);
                   else
-                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, curncount-1);
+                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, hp[index].curncount);
 
                   if (split)
                     printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp[index].dstart) * 1000.0, (hp[index].dend - dafter_connect) * 1000.0, ms, sc?sc:"");
