@@ -63,6 +63,8 @@ struct host_param{
   double avg_httping_time;
   int curncount;
   char* name;
+  int portnr;
+  char use_ssl;
   char have_resolved;
   double dstart, dend, wait;
   struct sockaddr_in6 addr;
@@ -85,7 +87,6 @@ void version(void)
 
 void usage(void)
 {
-  fprintf(stderr, "\n-g url         url (e.g. -g http://localhost/)\n");
   fprintf(stderr, "-p portnr      portnumber (e.g. 80)\n");
   fprintf(stderr, "-x host:port   hostname+portnumber of proxyserver\n");
   fprintf(stderr, "-c count       how many times to connect\n");
@@ -134,7 +135,6 @@ void usage(void)
   fprintf(stderr, "-C cookie=value Add a cookie to the request\n");
   fprintf(stderr, "-V             show the version\n\n");
   fprintf(stderr, "\n");
-  fprintf(stderr, "--url			-g\n");
   fprintf(stderr, "--port			-p\n");
   fprintf(stderr, "--host-port		-x\n");
   fprintf(stderr, "--count		-c\n");
@@ -300,7 +300,6 @@ int main(int argc, char *argv[])
   char split = 0, use_ipv6 = 0;
   char persistent_connections = 0, persistent_did_reconnect = 0;
   char no_cache = 0;
-  char *getcopyorg = NULL;
   int tfo = 0;
   int index;
   fd_set rd, wr;
@@ -308,7 +307,6 @@ int main(int argc, char *argv[])
 
   static struct option long_options[] =
     {
-      {"url",		1, NULL, 'g' },
       {"port",	1, NULL, 'p' },
       {"host-port",	1, NULL, 'x' },
       {"count",	1, NULL, 'c' },
@@ -356,7 +354,7 @@ int main(int argc, char *argv[])
 
   buffer = (char *)mymalloc(page_size, "receive buffer");
 
-  while((c = getopt_long(argc, argv, "ZQ6Sy:XL:bBg:hp:c:i:Gx:t:o:e:falqsmV?I:R:rn:N:z:AP:U:C:F", long_options, NULL)) != -1)
+  while((c = getopt_long(argc, argv, "ZQ6Sy:XL:bBp:c:i:Gx:t:o:e:falqsmV?I:R:rn:N:z:AP:U:C:F", long_options, NULL)) != -1)
     {
       switch(c)
         {
@@ -438,10 +436,6 @@ int main(int argc, char *argv[])
 
         case 'x':
           proxy = optarg;
-          break;
-
-        case 'g':
-          get = optarg;
           break;
 
         case 'r':
@@ -553,31 +547,27 @@ int main(int argc, char *argv[])
         }
     }
 
-  /* Multihost args */
+#ifndef NO_SSL
+  if (use_ssl && portnr == 80)
+    portnr = 443;
+#endif
+
+  /* Multihost hosts */
   n_hosts = argc - optind;
-  hp = (host_param*) calloc(sizeof(host_param), (!n_hosts) ? 1 : n_hosts);
+  if (!n_hosts)
+    {
+      usage();
+      error_exit("No hostname/getrequest given\n");
+    }
+
+  hp = (host_param*) calloc(sizeof(host_param), n_hosts);
 
   while (optind < argc)
     {
       int i = n_hosts - (argc - optind);
-      hp[i].name = mystrdup(argv[optind], "host name");
-      optind++;
-    }
 
-  last_error[0] = 0x00;
-
-  if (!get_instead_of_head && show_Bps)
-    error_exit("-b/-B can only be used when also using -G\n");
-
-  if(tfo && use_ssl)
-    error_exit("TCP Fast open and SSL not supported together\n");
-
-  if (get != NULL && !n_hosts)
-    {
       char *slash, *colon;
-      char *getcopy = mystrdup(get, "get request");
-
-      getcopyorg = getcopy;
+      char *getcopy = mystrdup(argv[optind], "hostname or url");
 
       if (strncasecmp(getcopy, "http://", 7) == 0)
         {
@@ -586,19 +576,8 @@ int main(int argc, char *argv[])
       else if (strncasecmp(getcopy, "https://", 8) == 0)
         {
           getcopy += 8;
-          use_ssl = 1;
+          hp[i].use_ssl = 1;
         }
-
-      /*
-        if (strncasecmp(getcopy, http_string, http_string_len) != 0)
-        {
-        fprintf(stderr, "'%s' is a strange URL\n", getcopy);
-        fprintf(stderr, "Expected: %s...\n", http_string);
-        if (strncasecmp(getcopy, "https://", 8) == 0)
-        fprintf(stderr, "Did you forget to add the '-l' switch to the httping commandline?\n");
-        return 2;
-        }
-      */
 
       slash = strchr(getcopy, '/');
       if (slash)
@@ -610,25 +589,28 @@ int main(int argc, char *argv[])
           if (colon)
             {
               *colon = 0x00;
-              portnr = atoi(colon + 1);
+              hp[i].portnr = atoi(colon + 1); /* per host port number */
+            }
+          else
+            {
+              hp[i].portnr = portnr; /* global port number */
             }
         }
-      // FIXME allow multiple hosts in get
-      hp[0].name = getcopy;
-      n_hosts = 1;
-    }
-
-  if (!n_hosts)
-    {
-      usage();
-      error_exit("No hostname/getrequest given\n");
-    }
-
+      hp[i].name = getcopy;
 #ifndef NO_SSL
-  if (use_ssl && portnr == 80)
-    portnr = 443;
+      if (hp[i].use_ssl && hp[i].portnr == 80)
+        hp[i].portnr = 443;
 #endif
+      optind++;
+    }
 
+  last_error[0] = 0x00;
+
+  if (!get_instead_of_head && show_Bps)
+    error_exit("-b/-B can only be used when also using -G\n");
+
+  if(tfo && use_ssl)            /* FIXME: check hp[index].use_ssl also */
+    error_exit("TCP Fast open and SSL not supported together\n");
 
   /* init variables */
   FD_ZERO(&rd);
@@ -640,23 +622,21 @@ int main(int argc, char *argv[])
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
       ph_init(&hp[index].ph);
-      if (get == NULL)
+
+#ifndef NO_SSL
+      if (hp[index].use_ssl || use_ssl)
         {
-#ifndef NO_SSL
-          if (use_ssl)
-            {
-              get = mymalloc(8 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
-              sprintf(get, "https://%s:%d/", hp[index].name, portnr);
-            }
-          else
-            {
-#endif
-              get = mymalloc(7 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
-              sprintf(get, "http://%s:%d/", hp[index].name, portnr);
-#ifndef NO_SSL
-            }
-#endif
+          get = mymalloc(8 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
+          sprintf(get, "https://%s:%d/", hp[index].name, hp[index].portnr);
         }
+      else
+        {
+#endif
+          get = mymalloc(7 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
+          sprintf(get, "http://%s:%d/", hp[index].name, hp[index].portnr);
+#ifndef NO_SSL
+        }
+#endif
 
       if (proxy)
         {
@@ -673,7 +653,7 @@ int main(int argc, char *argv[])
         }
 
 #ifndef NO_SSL
-      if (use_ssl)
+      if (hp[index].use_ssl || use_ssl)
         {
           hp[index].client_ctx = initialize_ctx();
           if (!hp[index].client_ctx)
@@ -740,20 +720,18 @@ int main(int argc, char *argv[])
       strcat(hp[index].request, "\r\n");
       hp[index].req_len = strlen(hp[index].request);
       if (!quiet && !machine_readable && !nagios_mode )
-        printf("PING %s:%d (%s):\n", hp[index].name, portnr, get);
+        printf("PING %s:%d (%s):\n", hp[index].name, hp[index].portnr, get);
       if (get != NULL)
         {
           free(get);
           get = NULL;
         }
-    }
+    } /* end for(index) */
 
   signal(SIGINT, handler);
   signal(SIGTERM, handler);
 
   timeout *= 1000;	/* change to ms */
-
-  port = proxyhost?proxyport:portnr;
 
   /* struct sockaddr_in6 addr; */
   struct addrinfo *ai = NULL, *ai_use;
@@ -782,6 +760,7 @@ int main(int argc, char *argv[])
           if (hp[index].ph.state == 0 && !hp[index].fatal)
             {
               host = proxyhost ? proxyhost : hp[index].name;
+              port = proxyhost ? proxyport : hp[index].portnr;
             persistent_loop:
               if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
                 {
@@ -843,7 +822,7 @@ int main(int argc, char *argv[])
                     }
 
 #ifndef NO_SSL
-                  if (use_ssl && ssl_h == NULL)
+                  if ((hp[index].use_ssl || use_ssl) && ssl_h == NULL)
                     {
                       BIO *s_bio = NULL;
                       int rc = connect_ssl(hp[index].ph.fd, hp[index].client_ctx, &ssl_h, &s_bio, timeout);
@@ -915,7 +894,7 @@ int main(int argc, char *argv[])
               if (get_ts() < hp[index].wait)
                 continue;
 #ifndef NO_SSL
-              if (use_ssl)
+              if (hp[index].use_ssl || use_ssl)
                 rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
               else
 #endif
@@ -1113,7 +1092,7 @@ int main(int argc, char *argv[])
               hp[index].dend = get_ts();
 
 #ifndef NO_SSL
-              if (use_ssl && !persistent_connections)
+              if ((hp[index].use_ssl || use_ssl) && !persistent_connections)
                 {
                   if (show_fp && ssl_h != NULL)
                     {
@@ -1179,9 +1158,9 @@ int main(int argc, char *argv[])
                     snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
-                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, len, hp[index].curncount);
+                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, headers_len, len, hp[index].curncount);
                   else
-                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, portnr, hp[index].name, headers_len, hp[index].curncount);
+                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, headers_len, hp[index].curncount);
 
                   if (split)
                     printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp[index].dstart) * 1000.0, (hp[index].dend - dafter_connect) * 1000.0, ms, sc?sc:"");
@@ -1208,7 +1187,7 @@ int main(int argc, char *argv[])
                         }
                     }
 
-                  if (use_ssl && show_fp && fp != NULL)
+                  if ((hp[index].use_ssl || use_ssl) && show_fp && fp != NULL)
                     {
                       printf(" %s", fp);
                       free(fp);
@@ -1279,7 +1258,6 @@ int main(int argc, char *argv[])
   type_err = 0;
   freeaddrinfo(ai);
   free(buffer);
-  free(getcopyorg);
 
   for(index = 0; index < n_hosts; index++)
     {
