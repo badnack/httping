@@ -63,6 +63,7 @@ struct host_param{
   double avg_httping_time;
   int curncount;
   char* name;
+  char persistent_did_reconnect;
   int portnr;
   char use_ssl;
   char have_resolved;
@@ -74,6 +75,7 @@ struct host_param{
 #ifndef NO_SSL
   SSL_CTX *client_ctx;
 #endif
+  SSL *ssl_h;
 };
 
 
@@ -291,14 +293,13 @@ int main(int argc, char *argv[])
   char show_Bps = 0, ask_compression = 0;
   int Bps_limit = -1;
   char show_bytes_xfer = 0, show_fp = 0;
-  SSL *ssl_h = NULL;
   struct sockaddr_in *bind_to = NULL;
   struct sockaddr_in bind_to_4;
   struct sockaddr_in6 bind_to_6;
   host_param *hp;
   char bind_to_valid = 0;
   char split = 0, use_ipv6 = 0;
-  char persistent_connections = 0, persistent_did_reconnect = 0;
+  char persistent_connections = 0;
   char no_cache = 0;
   int tfo = 0;
   int index;
@@ -621,6 +622,7 @@ int main(int argc, char *argv[])
       hp[index].min = 999999999999999.0;
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
+      hp[index].ssl_h = NULL;
       ph_init(&hp[index].ph);
 
 #ifndef NO_SSL
@@ -822,10 +824,10 @@ int main(int argc, char *argv[])
                     }
 
 #ifndef NO_SSL
-                  if ((hp[index].use_ssl || use_ssl) && ssl_h == NULL)
+                  if ((hp[index].use_ssl || use_ssl) && hp[index].ssl_h == NULL)
                     {
                       BIO *s_bio = NULL;
-                      int rc = connect_ssl(hp[index].ph.fd, hp[index].client_ctx, &ssl_h, &s_bio, timeout);
+                      int rc = connect_ssl(hp[index].ph.fd, hp[index].client_ctx, &hp[index].ssl_h, &s_bio, timeout);
                       if (rc != 0)
                         {
                           close(hp[index].ph.fd);
@@ -837,7 +839,7 @@ int main(int argc, char *argv[])
                                 {
                                   close(hp[index].ph.fd);
                                   hp[index].ph.fd = -1;
-                                  persistent_did_reconnect = 1;
+                                  hp[index].persistent_did_reconnect = 1;
                                   goto persistent_loop;
                                 }
                             }
@@ -895,7 +897,7 @@ int main(int argc, char *argv[])
                 continue;
 #ifndef NO_SSL
               if (hp[index].use_ssl || use_ssl)
-                rc = WRITE_SSL(ssl_h, hp[index].request, hp[index].req_len);
+                rc = WRITE_SSL(hp[index].ssl_h, hp[index].request, hp[index].req_len);
               else
 #endif
                 {
@@ -915,7 +917,7 @@ int main(int argc, char *argv[])
                       if (++hp[index].persistent_tries < 2)
                         {
                           close(hp[index].ph.fd);
-                          persistent_did_reconnect = 1;
+                          hp[index].persistent_did_reconnect = 1;
                           hp[index].ph.fd = -1;
                           hp[index].ph.state = 0;
                           goto_loop = 1;
@@ -949,7 +951,7 @@ int main(int argc, char *argv[])
               hp[index].curncount++;
               curncount++;
               wait_read--;
-              rc = get_HTTP_headers(hp[index].ph.fd, ssl_h, &reply, &overflow, timeout);
+              rc = get_HTTP_headers(hp[index].ph.fd, hp[index].ssl_h, &reply, &overflow, timeout);
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
                   /* statuscode is in first line behind
@@ -1018,7 +1020,7 @@ int main(int argc, char *argv[])
                           close(hp[index].ph.fd);
                           hp[index].ph.state = 0;
                           hp[index].ph.fd = -1;
-                          persistent_did_reconnect = 1;
+                          hp[index].persistent_did_reconnect = 1;
                           goto_loop = 1;
                           goto persistent_loop;
                         }
@@ -1094,19 +1096,19 @@ int main(int argc, char *argv[])
 #ifndef NO_SSL
               if ((hp[index].use_ssl || use_ssl) && !persistent_connections)
                 {
-                  if (show_fp && ssl_h != NULL)
+                  if (show_fp && hp[index].ssl_h != NULL)
                     {
-                      fp = get_fingerprint(ssl_h);
+                      fp = get_fingerprint(hp[index].ssl_h);
                     }
 
-                  if (close_ssl_connection(ssl_h, hp[index].ph.fd) == -1)
+                  if (close_ssl_connection(hp[index].ssl_h, hp[index].ph.fd) == -1)
                     {
                       snprintf(last_error, ERROR_BUFFER_SIZE, "error shutting down ssl\n");
                       emit_error();
                     }
 
-                  SSL_free(ssl_h);
-                  ssl_h = NULL;
+                  SSL_free(hp[index].ssl_h);
+                  hp[index].ssl_h = NULL;
                 }
 #endif
 
@@ -1167,10 +1169,10 @@ int main(int argc, char *argv[])
                   else
                     printf("time=%.2f ms %s", ms, sc?sc:"");
 
-                  if (persistent_did_reconnect)
+                  if (hp[index].persistent_did_reconnect)
                     {
                       printf(" C");
-                      persistent_did_reconnect = 0;
+                      hp[index].persistent_did_reconnect = 0;
                     }
 
                   if (show_Bps)
