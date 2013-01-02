@@ -567,7 +567,7 @@ int main(int argc, char *argv[])
       int i = n_hosts - (argc - optind);
 
       char *slash, *colon;
-      char *getcopy = mystrdup(argv[optind], "hostname or url");
+      char *getcopy = argv[optind];
 
       if (strncasecmp(getcopy, "http://", 7) == 0)
         {
@@ -1216,9 +1216,8 @@ int main(int argc, char *argv[])
             }// end read condition
         }// for select
 
-      if (!wait_read && curncount != count && !stop){
+      if (!wait_read && curncount != count && !stop)
         usleep((useconds_t)(wait * 1000000.0));
-      }
 
     }// for while
 
