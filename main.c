@@ -596,7 +596,7 @@ int main(int argc, char *argv[])
               hp[i].portnr = portnr; /* global port number */
             }
         }
-      hp[i].name = getcopy;
+      hp[i].name = strdup(getcopy);
 #ifndef NO_SSL
       if (hp[i].use_ssl && hp[i].portnr == 80)
         hp[i].portnr = 443;
