@@ -1156,7 +1156,7 @@ int main(int argc, char *argv[])
                   char current_host[1024];
                   char *operation = !persistent_connections ? "connected to" : "pinged host";
 
-                  if (getnameinfo((const struct sockaddr *)&hp[index].addr, sizeof(hp[index].addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) == -1)
+                  if (getnameinfo((const struct sockaddr *)&hp[index].addr, sizeof(hp[index].addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) != 0)
                     snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
