@@ -885,8 +885,8 @@ int main(int argc, char *argv[])
       if ((ret = select(max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
           if (ret == 0)
-            error_exit("No more hosts available\n");
-          error_exit("System error\n");
+            error_exit("\nNo more hosts available\n");
+          error_exit("\nSystem error\n");
         }
 
       for (index = 0; index < n_hosts; index++)

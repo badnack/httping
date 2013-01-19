@@ -109,6 +109,7 @@ int connect_to(struct sockaddr *bind_to, struct addrinfo *ai, int timeout, int t
 	if (rc == 0)
 	{
 		close (fd);
+    snprintf(last_error, ERROR_BUFFER_SIZE, "error connecting to host (%s)", strerror(errno));
 		return -2;	/* timeout */
 	}
 	else if (rc == -1)
