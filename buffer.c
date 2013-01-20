@@ -6,9 +6,10 @@
 ping_buffer* pb_create(int size)
 {
   ping_buffer* pb;
+  
   if ((pb = (ping_buffer*) malloc(sizeof (ping_buffer) + (sizeof (char) * size))) == NULL)
     return NULL;
-  
+  memset(pb, 0, sizeof (ping_buffer) + (sizeof (char) * size));
   pb->size = size;
   pb->to_read = 0;
   pb->to_write = 0;

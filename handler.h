@@ -25,3 +25,4 @@ struct ping_handler{
 };
 
 int ph_init(ping_handler *ph, int s_size, int r_size);
+void ph_free(ping_handler *ph);

@@ -1262,7 +1262,7 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
-      /* free(hp[index].request); */ //FIXME
+      ph_free(&hp[index].ph);
       free(hp[index].name);
 
       if(type_err != 0) //there was at least one error
