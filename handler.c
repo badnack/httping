@@ -40,7 +40,7 @@ void ph_free(ping_handler *ph)
 int ph_write(ping_handler* ph)
 {
   int rc;
-  
+
   if (ph == NULL)
     return -1;
 
@@ -51,14 +51,14 @@ int ph_write(ping_handler* ph)
   else if (rc == -2)
     snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
   else /* succesfully transferred bytes */
-    {     
+    {
       if (((ping_buffer*)ph->request)->cnt <= 0)
         {
           ((ping_buffer*)ph->request)->pnt = ph->i_req_pnt; /* the request is always the same */
-          ((ping_buffer*)ph->request)->cnt = ph->i_req_cnt;          
+          ((ping_buffer*)ph->request)->cnt = ph->i_req_cnt;
           rc = 1;
         }
-      else 
+      else
         rc = 0;
     }
 
@@ -83,78 +83,48 @@ int ph_write_ssl(SSL* ssl_h, ping_handler* ph)
       if (((ping_buffer*)ph->request)->cnt <= 0)
         {
           ((ping_buffer*)ph->request)->pnt = ph->i_req_pnt; /* the request is always the same */
-          ((ping_buffer*)ph->request)->cnt = ph->i_req_cnt;          
+          ((ping_buffer*)ph->request)->cnt = ph->i_req_cnt;
           rc = 1;
         }
-      else 
+      else
         rc = 0;
     }
 
   return rc;
 }
 
-/* int ph_read_HTTP_header(ping_handler* ph) */
-/* { */
-/*   int len_in = 0, len = 4096; */
-/* 	char *buffer = mymalloc(len, "http header"); */
-/* 	int rc = RC_OK; */
+int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len/* , int* overflow */)
+{
+  int rc;
 
-/* 	*headers = NULL; */
+  /* #ifndef NO_SSL */
+  /*    if (ssl_h) */
+  /*      rrc = SSL_read(ssl_h, &buffer[len_in], now_n); */
+  /*    else */
+  /* #endif */
+  rc = pb_socket_recv(ph->reply, ph->fd);
+  if (rc == 0 || rc == -1)	/* socket closed before request was read? */
+    return -1;
 
-/* 	memset(buffer, 0x00, len); */
+  pb_read(ph->reply, header, *h_len);
+  *h_len = strlen(*header);
 
-/* 	for(;;) */
-/* 	{ */
-/* 		int rrc; */
-/* 		int now_n = (len - len_in) - 1; */
+  if (strstr(*header, "\r\n\r\n") != NULL)
+    return 1;
 
-/* #ifndef NO_SSL */
-/* 		if (ssl_h) */
-/* 			rrc = SSL_read(ssl_h, &buffer[len_in], now_n); */
-/* 		else */
-/* #endif */
-/*       rrc = pb_socket_recv(ping_buffer* pb, int sd); */
-/* 			rrc = read_to(socket_h, &buffer[len_in], now_n, timeout); */
-/* 		if (rrc == 0 || rrc == RC_SHORTREAD)	/\* socket closed before request was read? *\/ */
-/*       { */
-/*         rc = RC_SHORTREAD; */
-/*         break; */
-/*       } */
-/* 		else if (rrc == RC_TIMEOUT)		/\* timeout *\/ */
-/*       { */
-/*         free(buffer); */
-/*         return RC_TIMEOUT; */
-/*       } */
-    
-/* 		len_in += rrc; */
-    
-/* 		buffer[len_in] = 0x00; */
-/* 		if (strstr(buffer, "\r\n\r\n") != NULL) */
-/* 			break; */
-    
-/* 		if (len_in == (len - 1)) */
-/*       { */
-/*         len <<= 1; */
-/*         buffer = (char *)myrealloc(buffer, len, "http reply"); */
-/*       } */
-/* 	} */
 
-/*   //only here *headers becomes different from NULL */
-/* 	*headers = buffer; */
-  
-/* 	char *term = strstr(buffer, "\r\n\r\n"); */
-/* 	if (term) */
-/* 		*overflow = len_in - (term - buffer + 4); */
-/* 	else */
-/* 		*overflow = 0; */
+  /* char *term = strstr(buffer, "\r\n\r\n"); */
+  /* if (term) */
+  /*  *overflow = len_in - (term - buffer + 4); */
+  /* else */
+  /*  *overflow = 0; */
 
-/* 	return rc; */
+  return 0;
+}
 
-/* } */
-
-/* int ph_read(ping_handler* ph) */
-/* { */
-/*   if (ph == NULL) */
-/*     return -1; */
-/*   return 0; */
-/* } */
+int ph_read(ping_handler* ph)
+{
+  if (ph == NULL)
+    return -1;
+  return 0;
+}

@@ -32,6 +32,7 @@ struct ping_buffer{
 ping_buffer* pb_create(int);
 int pb_write(ping_buffer* pb, char* fmt, ...);
 int pb_socket_send(ping_buffer* pb, int sd);
+int pb_read(ping_buffer* pb, char** buffer, int buf_start);
 int pb_ssl_send(ping_buffer* pb, SSL* ssl_h);
-/* int pb_socket_recv(ping_buffer* pb, int sd); */
+int pb_socket_recv(ping_buffer* pb, int sd);
 /* int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h); */

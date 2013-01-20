@@ -29,4 +29,4 @@ void ph_free(ping_handler *ph);
 int ph_read(ping_handler* ph);
 int ph_write(ping_handler* ph);
 int ph_write_ssl(SSL* ssl_h, ping_handler* ph);
-/* int ph_read_HTTP_header(ping_handler* ph); */
+int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len);

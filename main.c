@@ -578,11 +578,13 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
-      hp[index].min = 999999999999999.0;
+      hp[index].min = 999999999999999.0; //FIXE change in init funcion
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
       hp[index].ssl_h = NULL;
       hp[index].partial_write = 0;
+      hp[index].header = NULL;
+      hp[index].header_len = 0;
 
 #ifndef NO_SSL
       if (hp[index].use_ssl || use_ssl)

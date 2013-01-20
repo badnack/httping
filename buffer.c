@@ -62,6 +62,36 @@ int pb_write(ping_buffer* pb, char* fmt, ...)
   return awrite(pb, formatted_string, len);
 }
 
+int pb_read(ping_buffer* pb, char** buffer, int buf_start) //set dim to read? FIXME
+{
+  int r_pnt;
+  int to_read, tot;
+
+  if (pb == NULL)
+    return -1;
+
+  r_pnt = pb->pnt;
+  tot = 0;
+
+  if ((*buffer = (char*)realloc(*buffer, buf_start + pb->cnt + 1)) == NULL)
+    return -1;
+
+  while (pb->cnt > 0)
+    {
+      r_pnt = pb->pnt;
+      to_read = (pb->pnt > pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
+      memmove(buffer + buf_start, pb->buf + r_pnt, to_read);
+      r_pnt = (r_pnt + to_read) % pb->size;
+      buf_start += to_read;
+      pb->cnt -= to_read;
+      tot += to_read;
+    }
+
+  buffer[buf_start + pb->cnt] = '\0';
+
+  return tot;
+}
+
 int pb_socket_send(ping_buffer* pb, int sd)
 {
   ssize_t rc;
@@ -113,25 +143,31 @@ int pb_ssl_send(ping_buffer* pb, SSL* ssl_h)
   return rc;
 }
 
-/* int pb_socket_recv(ping_buffer* pb, int sd) */
-/* { */
-  /* int rc; */
-  /* int to_recv; */
+int pb_socket_recv(ping_buffer* pb, int sd)
+{
+  int rc, old_pnt;
+  int to_recv;
 
-  /* if (pb == NULL) */
-  /*   return -1; */
+  if (pb == NULL)
+    return -1;
+  if (pb->cnt == pb->size) /* read required */
+    return -2;
 
-  /* to_recv = ((pb->size - pb->available) > MAX_RECV) ? MAX_RECV : (pb->size - pb->available); */
-  /* if (rc = read(sd, (char*)pb->buf + pb->pnt, to_recv) < 0) */
-  /*   { */
-  /*     pb->pnt = 0; //see man 2 read */
-  /*     return -1; */
-  /*   } */
+  to_recv = (pb->available > pb->pnt) ? pb->size - pb->available : pb->pnt - pb->available;
+  to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
+  old_pnt = pb->pnt;
 
-  /* pb->available = (pb->available + rc) % pb->size; */
+  if ((rc = read(sd, (char*)pb->buf + pb->available, to_recv)) < 0)
+    {
+      pb->pnt = old_pnt; //see man 2 read
+      return -1;
+    }
 
-  /* return rc;   */
-/* } */
+  pb->available = (pb->available + rc) % pb->size;
+  pb->cnt += rc;
+
+  return rc;
+}
 
 /* int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h) */
 /* {} */

@@ -25,6 +25,8 @@ struct host_param{
   ping_handler ph; //FIXME, void?
   int fatal;
   int persistent_tries;
+  char* header;
+  int header_len;
 #ifndef NO_SSL
   SSL_CTX *client_ctx;
 #endif
