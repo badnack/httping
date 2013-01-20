@@ -667,7 +667,7 @@ int main(int argc, char *argv[])
         }
 #endif
 
-      if (ph_init(&hp[index].ph, strlen(get) + 8192) < 0)
+      if (ph_init(&hp[index].ph, BUF_SIZE, strlen(get) + 8192) < 0)
         error_exit("\nSystem error\n");
       if (proxyhost)
         pb_sprintf(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');

@@ -24,4 +24,4 @@ struct ping_handler{
   void* data;
 };
 
-int ph_init(ping_handler *ph, int size);
+int ph_init(ping_handler *ph, int s_size, int r_size);
