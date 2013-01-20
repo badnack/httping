@@ -15,6 +15,7 @@
 #include <openssl/ssl.h>
 
 #define FMT_SIZE 512
+#define MAX_SEND 512
 
 typedef struct ping_buffer ping_buffer;
 

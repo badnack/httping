@@ -50,31 +50,31 @@ int get_HTTP_headers(int socket_h, SSL *ssl_h, char **headers, int *overflow, in
 #endif
 			rrc = read_to(socket_h, &buffer[len_in], now_n, timeout);
 		if (rrc == 0 || rrc == RC_SHORTREAD)	/* socket closed before request was read? */
-		{
-			rc = RC_SHORTREAD;
-			break;
-		}
+      {
+        rc = RC_SHORTREAD;
+        break;
+      }
 		else if (rrc == RC_TIMEOUT)		/* timeout */
-		{
-			free(buffer);
-			return RC_TIMEOUT;
-		}
-
+      {
+        free(buffer);
+        return RC_TIMEOUT;
+      }
+    
 		len_in += rrc;
-
+    
 		buffer[len_in] = 0x00;
 		if (strstr(buffer, "\r\n\r\n") != NULL)
 			break;
-
+    
 		if (len_in == (len - 1))
-		{
-			len <<= 1;
-			buffer = (char *)myrealloc(buffer, len, "http reply");
-		}
+      {
+        len <<= 1;
+        buffer = (char *)myrealloc(buffer, len, "http reply");
+      }
 	}
-
+  
 	*headers = buffer;
-
+  
 	char *term = strstr(buffer, "\r\n\r\n");
 	if (term)
 		*overflow = len_in - (term - buffer + 4);

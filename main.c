@@ -218,7 +218,7 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-  int n_hosts = 0, wait_read = 0, partial_write = 0;
+  int n_hosts = 0, wait_read = 0, n_partial_write = 0;
   int goto_loop;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
@@ -582,6 +582,7 @@ int main(int argc, char *argv[])
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
       hp[index].ssl_h = NULL;
+      hp[index].partial_write = 0;
 
 #ifndef NO_SSL
       if (hp[index].use_ssl || use_ssl)
@@ -889,18 +890,26 @@ int main(int argc, char *argv[])
                   hp[index].err++;
                   continue;
                 }
+              else if (rc == 0 && hp[index].partial_write == 0)// rc == 0: write not yet completed
+                {
+                  n_partial_write++;
+                  hp[index].partial_write = 1;
+                }
               else if (rc == 1)
                 {
                   wait_read++;
-                  if(partial_write > 0)
-                    partial_write--;
                   hp[index].ph.state = 2;
+
+                  if (hp[index].partial_write == 1)
+                    {
+                      if (n_partial_write > 0)
+                        n_partial_write--;
+                      hp[index].partial_write = 0;
+                    }
                 }
-              else // rc == 0, write not yet completed
-                partial_write++;
             }
 
-          else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
+          else if (FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
               hp[index].curncount++;
               curncount++;
@@ -1007,7 +1016,6 @@ int main(int argc, char *argv[])
                       if (cur_limit == -1 || len < cur_limit)
                         cur_limit = len - overflow;
                     }
-
                   while(!hp[index].fatal)
                     {
                       int n = cur_limit != -1 ? min(cur_limit - bytes_transferred, page_size) : page_size;
@@ -1172,7 +1180,7 @@ int main(int argc, char *argv[])
             }// end read condition
         }// for select
 
-      if (!wait_read && !partial_write && curncount != count && !stop)
+      if (!wait_read && !n_partial_write && curncount != count && !stop)
         usleep((useconds_t)(wait * 1000000.0));
 
     }// for while

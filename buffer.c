@@ -10,7 +10,7 @@ static int awrite(ping_buffer* pb, char* buf, int len)
   int cnt, tot;
   int pnt;
 
-  if(pb == NULL)
+  if (pb == NULL)
     return -1;
 
   pnt = pb->available;
@@ -81,19 +81,22 @@ int pb_write(ping_buffer* pb, char* fmt, ...)
 int pb_socket_send(ping_buffer* pb, int sd)
 {
   ssize_t rc;
-
-  if(pb == NULL)
+  int to_snd;
+  
+  to_snd = ((pb->available - pb->pnt) > MAX_SEND) ? MAX_SEND : (pb->available - pb->pnt);
+  
+  if (pb == NULL)
     return -1;
 
-  rc = write(sd, (char*)pb->buf + pb->pnt, pb->available);
+  rc = write(sd, (char*)pb->buf + pb->pnt, to_snd);
 
   if (rc == -1)
     return -1;
-  if(rc == 0)
+  if (rc == 0)
     return -2;
 
   pb->pnt += rc;
-  if(pb->pnt == pb->available)
+  if (pb->pnt == pb->available)
     {
       pb->pnt = 0;
       return 1;
@@ -106,18 +109,18 @@ int pb_ssl_send(ping_buffer* pb, SSL* ssl_h)
 {
   ssize_t rc;
 
-  if(pb == NULL || ssl_h == NULL)
+  if (pb == NULL || ssl_h == NULL)
     return -1;
 
   rc = SSL_write(ssl_h, (char*)pb->buf + pb->pnt, pb->available);
 
   if (rc == -1)
     return -1;
-  if(rc == 0)
+  if (rc == 0)
     return -2;
 
   pb->pnt += rc;
-  if(pb->pnt == pb->available)
+  if (pb->pnt == pb->available)
     {
       pb->pnt = 0;
       return 1;
