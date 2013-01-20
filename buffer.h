@@ -24,6 +24,6 @@ struct ping_buffer{
   char buf[0];
 };
 
-ping_buffer* create_buffer(int);
-void spprintf(ping_buffer* pb, char* fmt, ...);
-void spcat(ping_buffer* pb, char* fmt, ...);
+ping_buffer* pb_create(int);
+int pb_sprintf(ping_buffer* pb, char* fmt, ...);
+int pb_strcat(ping_buffer* pb, char* fmt, ...);

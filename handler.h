@@ -13,15 +13,15 @@
    files in the program, then also delete it here.
 */
 
-#include "buffer.h"
+/* #include "buffer.h" */
 typedef struct ping_handler ping_handler;
 
 struct ping_handler{
   int state;
   int fd;
   int dead;
-  ping_buffer* request;
-  ping_buffer* data;
+  void* request;
+  void* data;
 };
 
 int ph_init(ping_handler *ph, int size);
