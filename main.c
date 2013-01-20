@@ -41,6 +41,9 @@
 #include "utils.h"
 #include "error.h"
 #include "handler.h"
+/* #include "buffer.h" */
+
+#define BUF_SIZE 255
 
 typedef struct host_param host_param;
 
@@ -54,8 +57,6 @@ char nagios_mode = 0;
 char last_error[ERROR_BUFFER_SIZE];
 
 struct host_param{
-  char* request;
-  int req_len;
   int ok, err;
   int Bps_min, Bps_max;
   long long int Bps_avg;
@@ -623,7 +624,8 @@ int main(int argc, char *argv[])
       hp[index].Bps_min = 1 << 30;
       hp[index].avg_httping_time = -1.0;
       hp[index].ssl_h = NULL;
-      ph_init(&hp[index].ph);
+      if(ph_init(&hp[index].ph, BUF_SIZE) < 0)
+        error_exit("\nSystem error\n");
 
 #ifndef NO_SSL
       if (hp[index].use_ssl || use_ssl)
@@ -666,10 +668,10 @@ int main(int argc, char *argv[])
             }
         }
 #endif
-
-      hp[index].request = mymalloc(strlen(get) + 8192, "request");
+      
+      hp[index].ph.request = (ping_buffer*)create_buffer(strlen(get) + 8192);
       if (proxyhost)
-        sprintf(hp[index].request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
+        spprintf(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
       else
         {
           char *dummy = get, *slash;
@@ -680,24 +682,24 @@ int main(int argc, char *argv[])
 
           slash = strchr(dummy, '/');
           if (slash)
-            sprintf(hp[index].request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
+            spprintf(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
           else
-            sprintf(hp[index].request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
+            spprintf(hp[index].ph.request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
         }
       if (useragent)
-        sprintf(&hp[index].request[strlen(hp[index].request)], "User-Agent: %s\r\n", useragent);
+        spcat(hp[index].ph.request, "User-Agent: %s\r\n", useragent);
       else
-        sprintf(&(hp[index].request[strlen(hp[index].request)]), "User-Agent: HTTPing v" VERSION "\r\n");
-      sprintf(&hp[index].request[strlen(hp[index].request)], "Host: %s\r\n", hp[index].name);
+        spcat(hp[index].ph.request, "User-Agent: HTTPing v" VERSION "\r\n");
+      spcat(hp[index].ph.request, "Host: %s\r\n", hp[index].name);
       if (referer)
-        sprintf(&hp[index].request[strlen(hp[index].request)], "Referer: %s\r\n", referer);
+        spcat(hp[index].ph.request, "Referer: %s\r\n", referer);
       if (ask_compression)
-        sprintf(&hp[index].request[strlen(hp[index].request)], "Accept-Encoding: gzip,deflate\r\n");
+        spcat(hp[index].ph.request, "Accept-Encoding: gzip,deflate\r\n");
 
       if (no_cache)
         {
-          sprintf(&hp[index].request[strlen(hp[index].request)], "Pragma: no-cache\r\n");
-          sprintf(&hp[index].request[strlen(hp[index].request)], "Cache-Control: no-cache\r\n");
+          spcat(hp[index].ph.request, "Pragma: no-cache\r\n");
+          spcat(hp[index].ph.request, "Cache-Control: no-cache\r\n");
         }
 
       /* Basic Authentification */
@@ -708,19 +710,18 @@ int main(int argc, char *argv[])
           error_exit("Basic Authnetication (-A) can only be used with a username and/or password (-U -P) ");
         sprintf(auth_string,"%s:%s",usr,pwd);
         enc_b64(auth_string, strlen(auth_string), b64_auth_string);
-        sprintf(&hp[index].request[strlen(hp[index].request)], "Authorization: Basic %s\r\n", b64_auth_string);
+        spcat(hp[index].ph.request, "Authorization: Basic %s\r\n", b64_auth_string);
       }
 
       /* Cookie Insertion */
       if (cookie) {
-        sprintf(&hp[index].request[strlen(hp[index].request)], "Cookie: %s;\r\n", cookie);
+        spcat(hp[index].ph.request, "Cookie: %s;\r\n", cookie);
       }
 
       if (persistent_connections)
-        sprintf(&hp[index].request[strlen(hp[index].request)], "Connection: keep-alive\r\n");
+        spcat(hp[index].ph.request, "Connection: keep-alive\r\n");
 
-      strcat(hp[index].request, "\r\n");
-      hp[index].req_len = strlen(hp[index].request);
+      spcat(hp[index].ph.request, "\r\n");
       if (!quiet && !machine_readable && !nagios_mode )
         printf("PING %s:%d (%s):\n", hp[index].name, hp[index].portnr, get);
       if (get != NULL)
@@ -787,11 +788,12 @@ int main(int argc, char *argv[])
                 }
 
               req_sent = 0;
-
+              
+              /* printf("%s\n", hp[index].ph.request->buf); */
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
                 {
                   hp[index].dstart = get_ts();
-                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].request, hp[index].req_len, &req_sent);
+                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, hp[index].ph.request->buf, hp[index].ph.request->to_write, &req_sent);
                 }
 
 
@@ -897,20 +899,20 @@ int main(int argc, char *argv[])
                 continue;
 #ifndef NO_SSL
               if (hp[index].use_ssl || use_ssl)
-                rc = WRITE_SSL(hp[index].ssl_h, hp[index].request, hp[index].req_len);
+                rc = WRITE_SSL(hp[index].ssl_h, hp[index].ph.request->buf, hp[index].ph.request->to_write);
               else
 #endif
                 {
                   if(!req_sent)
                     {
                       hp[index].dstart = get_ts();
-                      rc = mywrite(hp[index].ph.fd, hp[index].request, hp[index].req_len, timeout);
+                      rc = mywrite(hp[index].ph.fd, hp[index].ph.request->buf, hp[index].ph.request->to_write, timeout);
                     }
                   else
-                    rc = hp[index].req_len;
+                    rc = hp[index].ph.request->to_write;
                 }
 
-              if (rc != hp[index].req_len)
+              if (rc != hp[index].ph.request->to_write)
                 {
                   if (persistent_connections)
                     {
@@ -1262,7 +1264,7 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
-      free(hp[index].request);
+      /* free(hp[index].request); */ //FIXME
       free(hp[index].name);
 
       if(type_err != 0) //there was at least one error

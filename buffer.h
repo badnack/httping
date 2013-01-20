@@ -13,15 +13,17 @@
    files in the program, then also delete it here.
 */
 
-#include "buffer.h"
-typedef struct ping_handler ping_handler;
+typedef struct ping_buffer ping_buffer;
 
-struct ping_handler{
-  int state;
-  int fd;
-  int dead;
-  ping_buffer* request;
-  ping_buffer* data;
+struct ping_buffer{
+  int size;
+  int to_read;
+  int to_write;
+  int r_pnt;
+  int w_pnt;
+  char buf[0];
 };
 
-int ph_init(ping_handler *ph, int size);
+ping_buffer* create_buffer(int);
+void spprintf(ping_buffer* pb, char* fmt, ...);
+void spcat(ping_buffer* pb, char* fmt, ...);
