@@ -15,12 +15,10 @@ static int awrite(ping_buffer* pb, char* buf, int buf_len)
 
   len = buf_len;
 
-  while (buf_len > 0)
+  while (buf_len > 0 && pb->cnt < pb->size)
     {
       w_pnt = pb->available;
-      to_write = pb->size - pb->cnt;
-      if (to_write == 0)
-        break;
+      to_write = (pb->available >= pb->pnt) ? (pb->size - pb->available) : pb->pnt - pb->available;
       to_write = (to_write > buf_len) ? buf_len : to_write;
       memmove(pb->buf + w_pnt, buf, to_write);
       pb->available = (pb->available + to_write) % pb->size;
