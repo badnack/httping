@@ -860,7 +860,7 @@ int main(int argc, char *argv[])
               else
 #endif
                 {
-                  if(!req_sent)
+                  if (!req_sent)
                     {
                       hp[index].dstart = get_ts();
                       rc = ph_write(&hp[index].ph);
@@ -955,7 +955,7 @@ int main(int argc, char *argv[])
                     }
                 }
 
-              if (persistent_connections && show_bytes_xfer)
+              if (persistent_connections && show_bytes_xfer && reply != NULL)
                 {
                   char *length = strstr(reply, "\nContent-Length:");
                   if (!length)
@@ -970,9 +970,12 @@ int main(int argc, char *argv[])
                   len = atoi(&length[17]);
                 }
 
-              headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;
-
-              free(reply);
+              headers_len = 0;
+              if (reply != NULL)
+                {
+                  headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;              
+                  free(reply); //bug??? if reply == NULL
+                }
 
               if (rc < 0)
                 {

@@ -95,8 +95,7 @@ int pb_socket_send(ping_buffer* pb, int sd)
   if (rc == 0)
     return -2;
 
-  pb->pnt += rc;
-  if (pb->pnt == pb->available)
+  if ((pb->pnt += rc) == pb->available)
     {
       pb->pnt = 0;
       return 1;
