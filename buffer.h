@@ -12,18 +12,21 @@
    version.  If you delete this exception statement from all source
    files in the program, then also delete it here.
 */
+#include <openssl/ssl.h>
+
+#define FMT_SIZE 512
 
 typedef struct ping_buffer ping_buffer;
 
 struct ping_buffer{
   int size;
-  int to_read;
-  int to_write;
-  int r_pnt;
-  int w_pnt;
+  int available;
+  int pnt;
   char buf[0];
 };
 
 ping_buffer* pb_create(int);
-int pb_sprintf(ping_buffer* pb, char* fmt, ...);
-int pb_strcat(ping_buffer* pb, char* fmt, ...);
+int pb_write(ping_buffer* pb, char* fmt, ...);
+int pb_awrite(ping_buffer* pb, char* fmt, ...);
+int pb_socket_send(ping_buffer* pb, int sd);
+int pb_ssl_send(ping_buffer* pb, SSL* ssl_h);

@@ -40,8 +40,9 @@
 #include "res.h"
 #include "utils.h"
 #include "error.h"
-#include "handler.h"
+/* #include "handler.h" */
 #include "buffer.h"
+#include "hostparam.h"
 
 #define BUF_SIZE 255
 
@@ -51,34 +52,8 @@ static volatile int stop = 0;
 
 int quiet = 0;
 char machine_readable = 0;
-
 char nagios_mode = 0;
-
 char last_error[ERROR_BUFFER_SIZE];
-
-struct host_param{
-  int ok, err;
-  int Bps_min, Bps_max;
-  long long int Bps_avg;
-  double avg, min, max;
-  double avg_httping_time;
-  int curncount;
-  char* name;
-  char persistent_did_reconnect;
-  int portnr;
-  char use_ssl;
-  char have_resolved;
-  double dstart, dend, wait;
-  struct sockaddr_in6 addr;
-  ping_handler ph;
-  int fatal;
-  int persistent_tries;
-#ifndef NO_SSL
-  SSL_CTX *client_ctx;
-#endif
-  SSL *ssl_h;
-};
-
 
 void version(void)
 {
@@ -178,22 +153,6 @@ void usage(void)
   fprintf(stderr, "--help			-h\n");
 }
 
-int max_fd(host_param *hp, int n)
-{
-  int i, max;
-
-  if (n <= 0)
-    return -1;
-
-  max = hp[0].ph.fd;
-  for(i = 0; i < n; i++)
-    {
-      if (max < hp[i].ph.fd)
-        max = hp[i].ph.fd;
-    }
-  return max;
-}
-
 void emit_error()
 {
   if (!quiet && !machine_readable && !nagios_mode)
@@ -210,7 +169,6 @@ void emit_error()
 void handler(int sig)
 {
   fprintf(stderr, "Got signal %d\n", sig);
-
   stop = 1;
 }
 
@@ -260,7 +218,7 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-  int n_hosts = 0, wait_read = 0;
+  int n_hosts = 0, wait_read = 0, partial_write = 0;
   int goto_loop;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
@@ -670,7 +628,7 @@ int main(int argc, char *argv[])
       if (ph_init(&hp[index].ph, BUF_SIZE, strlen(get) + 8192) < 0)
         error_exit("\nSystem error\n");
       if (proxyhost)
-        pb_sprintf(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
+        pb_write(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
       else
         {
           char *dummy = get, *slash;
@@ -681,24 +639,24 @@ int main(int argc, char *argv[])
 
           slash = strchr(dummy, '/');
           if (slash)
-            pb_sprintf(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
+            pb_write(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
           else
-            pb_sprintf(hp[index].ph.request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
+            pb_write(hp[index].ph.request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
         }
       if (useragent)
-        pb_strcat(hp[index].ph.request, "User-Agent: %s\r\n", useragent);
+        pb_awrite(hp[index].ph.request, "User-Agent: %s\r\n", useragent);
       else
-        pb_strcat(hp[index].ph.request, "User-Agent: HTTPing v" VERSION "\r\n");
-      pb_strcat(hp[index].ph.request, "Host: %s\r\n", hp[index].name);
+        pb_awrite(hp[index].ph.request, "User-Agent: HTTPing v" VERSION "\r\n");
+      pb_awrite(hp[index].ph.request, "Host: %s\r\n", hp[index].name);
       if (referer)
-        pb_strcat(hp[index].ph.request, "Referer: %s\r\n", referer);
+        pb_awrite(hp[index].ph.request, "Referer: %s\r\n", referer);
       if (ask_compression)
-        pb_strcat(hp[index].ph.request, "Accept-Encoding: gzip,deflate\r\n");
+        pb_awrite(hp[index].ph.request, "Accept-Encoding: gzip,deflate\r\n");
 
       if (no_cache)
         {
-          pb_strcat(hp[index].ph.request, "Pragma: no-cache\r\n");
-          pb_strcat(hp[index].ph.request, "Cache-Control: no-cache\r\n");
+          pb_awrite(hp[index].ph.request, "Pragma: no-cache\r\n");
+          pb_awrite(hp[index].ph.request, "Cache-Control: no-cache\r\n");
         }
 
       /* Basic Authentification */
@@ -709,18 +667,18 @@ int main(int argc, char *argv[])
           error_exit("Basic Authnetication (-A) can only be used with a username and/or password (-U -P) ");
         sprintf(auth_string,"%s:%s",usr,pwd);
         enc_b64(auth_string, strlen(auth_string), b64_auth_string);
-        pb_strcat(hp[index].ph.request, "Authorization: Basic %s\r\n", b64_auth_string);
+        pb_awrite(hp[index].ph.request, "Authorization: Basic %s\r\n", b64_auth_string);
       }
 
       /* Cookie Insertion */
       if (cookie) {
-        pb_strcat(hp[index].ph.request, "Cookie: %s;\r\n", cookie);
+        pb_awrite(hp[index].ph.request, "Cookie: %s;\r\n", cookie);
       }
 
       if (persistent_connections)
-        pb_strcat(hp[index].ph.request, "Connection: keep-alive\r\n");
+        pb_awrite(hp[index].ph.request, "Connection: keep-alive\r\n");
 
-      pb_strcat(hp[index].ph.request, "\r\n");
+      pb_awrite(hp[index].ph.request, "\r\n");
       if (!quiet && !machine_readable && !nagios_mode )
         printf("PING %s:%d (%s):\n", hp[index].name, hp[index].portnr, get);
       if (get != NULL)
@@ -791,7 +749,7 @@ int main(int argc, char *argv[])
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
                 {
                   hp[index].dstart = get_ts();
-                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((ping_buffer*)(hp[index].ph.request))->buf, ((ping_buffer*)(hp[index].ph.request))->to_write, &req_sent);
+                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((ping_buffer*)(hp[index].ph.request))->buf, ((ping_buffer*)(hp[index].ph.request))->available, &req_sent); //FIXME
                 }
 
 
@@ -886,7 +844,7 @@ int main(int argc, char *argv[])
         {
           if (ret == 0)
             error_exit("\nNo more hosts available\n");
-          error_exit("\nSystem error\n");
+          error_exit("\nSystem error (select)\n");
         }
 
       for (index = 0; index < n_hosts; index++)
@@ -897,20 +855,20 @@ int main(int argc, char *argv[])
                 continue;
 #ifndef NO_SSL
               if (hp[index].use_ssl || use_ssl)
-                rc = WRITE_SSL(hp[index].ssl_h, ((ping_buffer*)hp[index].ph.request)->buf, ((ping_buffer*)hp[index].ph.request)->to_write);
+                rc = ph_write_ssl(hp[index].ssl_h, &hp[index].ph);
               else
 #endif
                 {
                   if(!req_sent)
                     {
                       hp[index].dstart = get_ts();
-                      rc = mywrite(hp[index].ph.fd, ((ping_buffer*)hp[index].ph.request)->buf, ((ping_buffer*)hp[index].ph.request)->to_write, timeout);
+                      rc = ph_write(&hp[index].ph);
                     }
                   else
-                    rc = ((ping_buffer*)hp[index].ph.request)->to_write;
+                    rc = 1;
                 }
 
-              if (rc != ((ping_buffer*)hp[index].ph.request)->to_write)
+              if (rc < 0)
                 {
                   if (persistent_connections)
                     {
@@ -924,26 +882,22 @@ int main(int argc, char *argv[])
                           goto persistent_loop;
                         }
                     }
-
-                  if (rc == -1)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "error sending request to host\n");
-                  else if (rc == -2)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout sending to host\n");
-                  else if (rc == -3)
-                    {/* ^C */}
-                  else if (rc == 0)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
-
                   emit_error();
-
                   close(hp[index].ph.fd);
                   hp[index].ph.fd = -1;
                   hp[index].ph.state = 0;
                   hp[index].err++;
                   continue;
                 }
-              wait_read++;
-              hp[index].ph.state = 2;
+              else if (rc == 1)
+                {
+                  wait_read++;
+                  if(partial_write > 0)
+                    partial_write--;
+                  hp[index].ph.state = 2;
+                }
+              else // rc == 0, write not yet completed
+                partial_write++;
             }
 
           else if(FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
@@ -1218,7 +1172,7 @@ int main(int argc, char *argv[])
             }// end read condition
         }// for select
 
-      if (!wait_read && curncount != count && !stop)
+      if (!wait_read && !partial_write && curncount != count && !stop)
         usleep((useconds_t)(wait * 1000000.0));
 
     }// for while
