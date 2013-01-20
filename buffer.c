@@ -64,30 +64,33 @@ int pb_write(ping_buffer* pb, char* fmt, ...)
 
 int pb_read(ping_buffer* pb, char** buffer, int buf_start) //set dim to read? FIXME
 {
-  int r_pnt;
+  int r_pnt, size;
   int to_read, tot;
 
   if (pb == NULL)
     return -1;
+  if (pb->cnt == 0)
+    return 0;
 
   r_pnt = pb->pnt;
   tot = 0;
-
-  if ((*buffer = (char*)realloc(*buffer, buf_start + pb->cnt + 1)) == NULL)
+  size = buf_start + pb->cnt;
+  if ((*buffer = (char*)realloc(*buffer, size + 1)) == NULL)
     return -1;
 
   while (pb->cnt > 0)
     {
       r_pnt = pb->pnt;
-      to_read = (pb->pnt > pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
-      memmove(buffer + buf_start, pb->buf + r_pnt, to_read);
+      to_read = (pb->pnt >= pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
+      to_read = (pb->size) ? pb->cnt : to_read;
+      memmove(*buffer + buf_start, pb->buf + r_pnt, to_read);
       r_pnt = (r_pnt + to_read) % pb->size;
       buf_start += to_read;
       pb->cnt -= to_read;
       tot += to_read;
     }
 
-  buffer[buf_start + pb->cnt] = '\0';
+  (*buffer)[size] = '\0';
 
   return tot;
 }
@@ -153,7 +156,7 @@ int pb_socket_recv(ping_buffer* pb, int sd)
   if (pb->cnt == pb->size) /* read required */
     return -2;
 
-  to_recv = (pb->available > pb->pnt) ? pb->size - pb->available : pb->pnt - pb->available;
+  to_recv = (pb->available >= pb->pnt) ? pb->size - pb->available : pb->pnt - pb->available;
   to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
   old_pnt = pb->pnt;
 
@@ -169,5 +172,28 @@ int pb_socket_recv(ping_buffer* pb, int sd)
   return rc;
 }
 
-/* int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h) */
-/* {} */
+int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h)
+{
+  int rc, old_pnt;
+  int to_recv;
+
+  if (pb == NULL)
+    return -1;
+  if (pb->cnt == pb->size || ssl_h == NULL) /* read required */
+    return -2;
+
+  to_recv = (pb->available >= pb->pnt) ? pb->size - pb->available : pb->pnt - pb->available;
+  to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
+  old_pnt = pb->pnt;
+
+  if ((rc = SSL_read(ssl_h, (char*) pb->buf + pb->available, to_recv)) < 0)
+    {
+      pb->pnt = old_pnt; //see man 2 read
+      return -1;
+    }
+
+  pb->available = (pb->available + rc) % pb->size;
+  pb->cnt += rc;
+
+  return rc;
+}

@@ -9,7 +9,7 @@
 typedef struct host_param host_param;
 struct host_param{
   int ok, err;
-  int partial_write;
+  int partial_write, partial_read;
   int Bps_min, Bps_max;
   long long int Bps_avg;
   double avg, min, max;

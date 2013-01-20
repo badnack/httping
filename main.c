@@ -218,7 +218,7 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-  int n_hosts = 0, wait_read = 0, n_partial_write = 0;
+  int n_hosts = 0, wait_read = 0, n_partial_write = 0, n_partial_read = 0;
   int goto_loop;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
@@ -583,6 +583,7 @@ int main(int argc, char *argv[])
       hp[index].avg_httping_time = -1.0;
       hp[index].ssl_h = NULL;
       hp[index].partial_write = 0;
+      hp[index].partial_read = 0;
       hp[index].header = NULL;
       hp[index].header_len = 0;
 
@@ -894,34 +895,37 @@ int main(int argc, char *argv[])
                   hp[index].err++;
                   continue;
                 }
-              else if (rc == 0 && hp[index].partial_write == 0) //rc == 0: write not yet completed
+              else if (rc == 0) //rc == 0: write not yet completed
                 {
-                  n_partial_write++;
-                  hp[index].partial_write = 1;
-                }
-              else if (rc == 1) //write completed
-                {
-                  wait_read++;
-                  hp[index].ph.state = 2;
-
-                  if (hp[index].partial_write == 1)
+                  if (hp[index].partial_write == 0)
                     {
-                      if (n_partial_write > 0)
-                        n_partial_write--;
-                      hp[index].partial_write = 0;
+                      n_partial_write++;
+                      hp[index].partial_write = 1;
                     }
+                  continue;
+                }
+
+              //write completed
+              wait_read++;
+              hp[index].ph.state = 2;
+              
+              if (hp[index].partial_write == 1)
+                {
+                  if (n_partial_write > 0)
+                    n_partial_write--;
+                  hp[index].partial_write = 0;
                 }
             }
 
           else if (FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
-              rc = get_HTTP_headers(hp[index].ph.fd, hp[index].ssl_h, &reply, &overflow, timeout);
-
-              hp[index].curncount++;
-              curncount++;
-              wait_read--;
-
-             
+              #ifndef NO_SSL
+                 if (hp[index].ssl_h)
+                   rc = ph_read_ssl_HTTP_header(&hp[index].ph, hp[index].ssl_h, &hp[index].header, &hp[index].header_len); //FIXME
+                 else
+              #endif
+                   rc = ph_read_HTTP_header(&hp[index].ph, &hp[index].header, &hp[index].header_len); //FIXME
+              reply = hp[index].header;
               if (rc < 0)
                 {
                   if (persistent_connections)
@@ -937,10 +941,8 @@ int main(int argc, char *argv[])
                         }
                     }
 
-                  if (rc == RC_SHORTREAD)
+                  if (rc == -1)
                     snprintf(last_error, ERROR_BUFFER_SIZE, "error receiving reply from host\n");
-                  else if (rc == RC_TIMEOUT)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout receiving reply from host\n");
 
                   emit_error();
 
@@ -950,6 +952,28 @@ int main(int argc, char *argv[])
                   hp[index].err++;
                   continue;
                 }
+
+              if (rc == 0)
+                {
+                  if (hp[index].partial_read == 0)
+                    {
+                      n_partial_read++;
+                      hp[index].partial_read = 1;
+                    }
+                  continue;
+                }
+
+              if (hp[index].partial_read == 1)
+                {
+                  if (n_partial_read > 0)
+                    n_partial_read--;
+                  hp[index].partial_read = 0;
+                }
+              
+              hp[index].curncount++;
+              curncount++;
+              wait_read--;
+
 
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
@@ -1010,7 +1034,10 @@ int main(int argc, char *argv[])
               if (reply != NULL)
                 {
                   headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;              
-                  free(reply); //bug??? if reply == NULL
+                  free(hp[index].header); //bug??? if reply == NULL
+                  hp[index].header = NULL;
+                  hp[index].header_len = 0;
+                  reply = NULL;
                 }
 
               hp[index].ok++;
@@ -1018,6 +1045,7 @@ int main(int argc, char *argv[])
 
               if (get_instead_of_head && show_Bps)
                 {
+                  printf("GET: FIXME!\n");
                   double dl_start = get_ts(), dl_end;
                   int cur_limit = Bps_limit;
 
@@ -1190,7 +1218,7 @@ int main(int argc, char *argv[])
             }// end read condition
         }// for select
 
-      if (!wait_read && !n_partial_write && curncount != count && !stop)
+      if (!wait_read && !n_partial_write && !n_partial_read && curncount != count && !stop)
         usleep((useconds_t)(wait * 1000000.0));
 
     }// for while
