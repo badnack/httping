@@ -645,19 +645,19 @@ int main(int argc, char *argv[])
             pb_write(hp[index].ph.request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
         }
       if (useragent)
-        pb_awrite(hp[index].ph.request, "User-Agent: %s\r\n", useragent);
+        pb_write(hp[index].ph.request, "User-Agent: %s\r\n", useragent);
       else
-        pb_awrite(hp[index].ph.request, "User-Agent: HTTPing v" VERSION "\r\n");
-      pb_awrite(hp[index].ph.request, "Host: %s\r\n", hp[index].name);
+        pb_write(hp[index].ph.request, "User-Agent: HTTPing v" VERSION "\r\n");
+      pb_write(hp[index].ph.request, "Host: %s\r\n", hp[index].name);
       if (referer)
-        pb_awrite(hp[index].ph.request, "Referer: %s\r\n", referer);
+        pb_write(hp[index].ph.request, "Referer: %s\r\n", referer);
       if (ask_compression)
-        pb_awrite(hp[index].ph.request, "Accept-Encoding: gzip,deflate\r\n");
+        pb_write(hp[index].ph.request, "Accept-Encoding: gzip,deflate\r\n");
 
       if (no_cache)
         {
-          pb_awrite(hp[index].ph.request, "Pragma: no-cache\r\n");
-          pb_awrite(hp[index].ph.request, "Cache-Control: no-cache\r\n");
+          pb_write(hp[index].ph.request, "Pragma: no-cache\r\n");
+          pb_write(hp[index].ph.request, "Cache-Control: no-cache\r\n");
         }
 
       /* Basic Authentification */
@@ -668,18 +668,20 @@ int main(int argc, char *argv[])
           error_exit("Basic Authnetication (-A) can only be used with a username and/or password (-U -P) ");
         sprintf(auth_string,"%s:%s",usr,pwd);
         enc_b64(auth_string, strlen(auth_string), b64_auth_string);
-        pb_awrite(hp[index].ph.request, "Authorization: Basic %s\r\n", b64_auth_string);
+        pb_write(hp[index].ph.request, "Authorization: Basic %s\r\n", b64_auth_string);
       }
 
       /* Cookie Insertion */
       if (cookie) {
-        pb_awrite(hp[index].ph.request, "Cookie: %s;\r\n", cookie);
+        pb_write(hp[index].ph.request, "Cookie: %s;\r\n", cookie);
       }
 
       if (persistent_connections)
-        pb_awrite(hp[index].ph.request, "Connection: keep-alive\r\n");
+        pb_write(hp[index].ph.request, "Connection: keep-alive\r\n");
 
-      pb_awrite(hp[index].ph.request, "\r\n");
+      pb_write(hp[index].ph.request, "\r\n");
+      hp[index].ph.i_req_cnt = ((ping_buffer*)hp[index].ph.request)->cnt;
+
       if (!quiet && !machine_readable && !nagios_mode )
         printf("PING %s:%d (%s):\n", hp[index].name, hp[index].portnr, get);
       if (get != NULL)
@@ -869,7 +871,7 @@ int main(int argc, char *argv[])
                     rc = 1;
                 }
 
-              if (rc < 0)
+              if (rc < 0) //errors
                 {
                   if (persistent_connections)
                     {
@@ -890,12 +892,12 @@ int main(int argc, char *argv[])
                   hp[index].err++;
                   continue;
                 }
-              else if (rc == 0 && hp[index].partial_write == 0)// rc == 0: write not yet completed
+              else if (rc == 0 && hp[index].partial_write == 0) //rc == 0: write not yet completed
                 {
                   n_partial_write++;
                   hp[index].partial_write = 1;
                 }
-              else if (rc == 1)
+              else if (rc == 1) //write completed
                 {
                   wait_read++;
                   hp[index].ph.state = 2;
@@ -911,10 +913,42 @@ int main(int argc, char *argv[])
 
           else if (FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
             {
+              rc = get_HTTP_headers(hp[index].ph.fd, hp[index].ssl_h, &reply, &overflow, timeout);
+
               hp[index].curncount++;
               curncount++;
               wait_read--;
-              rc = get_HTTP_headers(hp[index].ph.fd, hp[index].ssl_h, &reply, &overflow, timeout);
+
+             
+              if (rc < 0)
+                {
+                  if (persistent_connections)
+                    {
+                      if (++hp[index].persistent_tries < 2)
+                        {
+                          close(hp[index].ph.fd);
+                          hp[index].ph.state = 0;
+                          hp[index].ph.fd = -1;
+                          hp[index].persistent_did_reconnect = 1;
+                          goto_loop = 1;
+                          goto persistent_loop;
+                        }
+                    }
+
+                  if (rc == RC_SHORTREAD)
+                    snprintf(last_error, ERROR_BUFFER_SIZE, "error receiving reply from host\n");
+                  else if (rc == RC_TIMEOUT)
+                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout receiving reply from host\n");
+
+                  emit_error();
+
+                  close(hp[index].ph.fd);
+                  hp[index].ph.fd = -1;
+                  hp[index].ph.state = 0;
+                  hp[index].err++;
+                  continue;
+                }
+
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
                   /* statuscode is in first line behind
@@ -975,35 +1009,6 @@ int main(int argc, char *argv[])
                 {
                   headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;              
                   free(reply); //bug??? if reply == NULL
-                }
-
-              if (rc < 0)
-                {
-                  if (persistent_connections)
-                    {
-                      if (++hp[index].persistent_tries < 2)
-                        {
-                          close(hp[index].ph.fd);
-                          hp[index].ph.state = 0;
-                          hp[index].ph.fd = -1;
-                          hp[index].persistent_did_reconnect = 1;
-                          goto_loop = 1;
-                          goto persistent_loop;
-                        }
-                    }
-
-                  if (rc == RC_SHORTREAD)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "error receiving reply from host\n");
-                  else if (rc == RC_TIMEOUT)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout receiving reply from host\n");
-
-                  emit_error();
-
-                  close(hp[index].ph.fd);
-                  hp[index].ph.fd = -1;
-                  hp[index].ph.state = 0;
-                  hp[index].err++;
-                  continue;
                 }
 
               hp[index].ok++;

@@ -5,26 +5,30 @@
 #include <string.h>
 #include <unistd.h>
 
-static int awrite(ping_buffer* pb, char* buf, int len)
+static int awrite(ping_buffer* pb, char* buf, int buf_len)
 {
-  int cnt, tot;
-  int pnt;
+  int to_write;
+  int w_pnt, len;
 
   if (pb == NULL)
     return -1;
 
-  pnt = pb->available;
+  len = buf_len;
 
-  while (len > 0)
+  while (buf_len > 0)
     {
-      cnt = pb->size - pb->available;
-      tot = snprintf(pb->buf + pnt, cnt, "%s", buf);
-      pb->available = (pb->available + tot) % pb->size;
-      pnt = (pnt + tot) % pb->size;
-      len -= tot;
+      w_pnt = pb->available;
+      to_write = pb->size - pb->cnt;
+      if (to_write == 0)
+        break;
+      to_write = (to_write > buf_len) ? buf_len : to_write;
+      memmove(pb->buf + w_pnt, buf, to_write);
+      pb->available = (pb->available + to_write) % pb->size;
+      buf_len -= to_write;
+      pb->cnt += to_write;
     }
 
-  return len;
+  return len - buf_len;
 }
 
 ping_buffer* pb_create(int size)
@@ -38,25 +42,9 @@ ping_buffer* pb_create(int size)
   pb->size = size;
   pb->available = 0;
   pb->pnt = 0;
+  pb->cnt = 0;
 
   return pb;
-}
-
-int pb_awrite(ping_buffer* pb, char* fmt, ...)
-{
-  char formatted_string[FMT_SIZE];
-  va_list argptr;
-  int len;
-
-  if (pb == NULL)
-    return 0;
-
-  va_start(argptr,fmt);
-  vsnprintf(formatted_string, FMT_SIZE, fmt, argptr);
-  va_end(argptr);
-  len = strnlen(formatted_string, FMT_SIZE);
-
-  return awrite(pb, formatted_string, len);
 }
 
 int pb_write(ping_buffer* pb, char* fmt, ...)
@@ -72,8 +60,6 @@ int pb_write(ping_buffer* pb, char* fmt, ...)
   vsnprintf(formatted_string, FMT_SIZE, fmt, argptr);
   va_end(argptr);
   len = strnlen(formatted_string, FMT_SIZE);
-  pb->available = 0;
-  pb->pnt = 0;
 
   return awrite(pb, formatted_string, len);
 }
@@ -82,12 +68,14 @@ int pb_socket_send(ping_buffer* pb, int sd)
 {
   ssize_t rc;
   int to_snd;
-  
-  to_snd = ((pb->available - pb->pnt) > MAX_SEND) ? MAX_SEND : (pb->available - pb->pnt);
-  
+
   if (pb == NULL)
     return -1;
+  if (pb->cnt == 0)
+    return 1;
 
+  to_snd = (pb->available > pb->pnt) ? (pb->available - pb->pnt) : pb->size - pb->pnt;
+  to_snd = (to_snd > MAX_SEND) ? MAX_SEND : to_snd;
   rc = write(sd, (char*)pb->buf + pb->pnt, to_snd);
 
   if (rc == -1)
@@ -95,35 +83,57 @@ int pb_socket_send(ping_buffer* pb, int sd)
   if (rc == 0)
     return -2;
 
-  if ((pb->pnt += rc) == pb->available)
-    {
-      pb->pnt = 0;
-      return 1;
-    }
+  pb->pnt =  (pb->pnt + rc) % pb->size;
+  pb->cnt -= rc;
 
-  return 0;
+  return rc;
 }
 
 int pb_ssl_send(ping_buffer* pb, SSL* ssl_h)
 {
   ssize_t rc;
+  int to_snd;
 
   if (pb == NULL || ssl_h == NULL)
     return -1;
+  if (pb->cnt == 0)
+    return 1;
 
-  rc = SSL_write(ssl_h, (char*)pb->buf + pb->pnt, pb->available);
+  to_snd = (pb->available > pb->pnt) ? (pb->available - pb->pnt) : pb->size - pb->pnt;
+  to_snd = (to_snd > MAX_SEND) ? MAX_SEND : to_snd;
+  rc = SSL_write(ssl_h, (char*)pb->buf + pb->pnt, to_snd);
 
   if (rc == -1)
     return -1;
   if (rc == 0)
     return -2;
 
-  pb->pnt += rc;
-  if (pb->pnt == pb->available)
-    {
-      pb->pnt = 0;
-      return 1;
-    }
 
-  return 0;
+  pb->pnt =  (pb->pnt + rc) % pb->size;
+  pb->cnt -= rc;
+
+  return rc;
 }
+
+/* int pb_socket_recv(ping_buffer* pb, int sd) */
+/* { */
+  /* int rc; */
+  /* int to_recv; */
+
+  /* if (pb == NULL) */
+  /*   return -1; */
+
+  /* to_recv = ((pb->size - pb->available) > MAX_RECV) ? MAX_RECV : (pb->size - pb->available); */
+  /* if (rc = read(sd, (char*)pb->buf + pb->pnt, to_recv) < 0) */
+  /*   { */
+  /*     pb->pnt = 0; //see man 2 read */
+  /*     return -1; */
+  /*   } */
+
+  /* pb->available = (pb->available + rc) % pb->size; */
+
+  /* return rc;   */
+/* } */
+
+/* int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h) */
+/* {} */

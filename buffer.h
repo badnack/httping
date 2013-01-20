@@ -16,6 +16,7 @@
 
 #define FMT_SIZE 512
 #define MAX_SEND 512
+#define MAX_RECV 512
 
 typedef struct ping_buffer ping_buffer;
 
@@ -23,11 +24,14 @@ struct ping_buffer{
   int size;
   int available;
   int pnt;
+  int full;
+  int cnt;
   char buf[0];
 };
 
 ping_buffer* pb_create(int);
 int pb_write(ping_buffer* pb, char* fmt, ...);
-int pb_awrite(ping_buffer* pb, char* fmt, ...);
 int pb_socket_send(ping_buffer* pb, int sd);
 int pb_ssl_send(ping_buffer* pb, SSL* ssl_h);
+/* int pb_socket_recv(ping_buffer* pb, int sd); */
+/* int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h); */

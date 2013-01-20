@@ -19,9 +19,9 @@ typedef struct ping_handler ping_handler;
 struct ping_handler{
   int state;
   int fd;
-  int dead;
-  void* request;
-  void* data;
+  int i_req_pnt, i_req_cnt;
+  void* request; /* two different buffer because the request is fixed */
+  void* reply;
 };
 
 int ph_init(ping_handler *ph, int s_size, int r_size);
@@ -29,3 +29,4 @@ void ph_free(ping_handler *ph);
 int ph_read(ping_handler* ph);
 int ph_write(ping_handler* ph);
 int ph_write_ssl(SSL* ssl_h, ping_handler* ph);
+/* int ph_read_HTTP_header(ping_handler* ph); */
