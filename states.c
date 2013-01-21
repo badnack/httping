@@ -191,7 +191,8 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
     }
 
   hp_tmp->dl_start = get_ts(); //Just before the state 3
-  hp_tmp->bytes_transferred = 0;
+  hp_tmp->bytes_transferred = overflow;
+
   if (persistent_connections)
     {
       if (hp_tmp->cur_limit == -1 || len < hp_tmp->cur_limit)
