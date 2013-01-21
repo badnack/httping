@@ -871,7 +871,7 @@ int main(int argc, char *argv[])
 
           else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 2)
             {
-              /* state 2*/
+              /* state 2: Header read */
               if (hp_tmp->ph.state == 2)
                 {
                   rc = state_read_header(hp_tmp, persistent_connections, &n_partial_read, show_statuscodes, machine_readable, ask_compression, &is_compressed, show_bytes_xfer);
@@ -891,15 +891,15 @@ int main(int argc, char *argv[])
             }
           else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 3)
             {
-              /* state 3 */
+              /* state 3: body read */
               rc = state_read_body(hp_tmp, Bps_limit);
 
               if (rc == RECV_FAIL || rc == PART_READ)
                   continue;              
               hp_tmp->ph.state = 4;
-            } // end state 3
+            }
           
-          /* show result */
+          /* state 4: show results */
           if (hp_tmp->ph.state == 4)
             {
               hp_tmp->dend = get_ts();
