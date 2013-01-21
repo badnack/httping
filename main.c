@@ -41,6 +41,7 @@
 #include "utils.h"
 #include "error.h"
 #include "hostparam.h"
+#include "states.h"
 
 #define BUF_SIZE 4096
 
@@ -581,7 +582,7 @@ int main(int argc, char *argv[])
           hp_tmp->fatal = 1;
           continue;
         }
-      
+
       hp_set_start_values(hp_tmp);
 #ifndef NO_SSL
       if (hp_tmp->use_ssl || use_ssl)
@@ -706,12 +707,11 @@ int main(int argc, char *argv[])
     {
       double ms;
       double dafter_connect = 0.0;
-      char *reply;
       char is_compressed = 0;
       char *fp = NULL;
       int rc, ret;
       char *scdummy = NULL;
-      int len = 0, overflow = 0;
+      int len = 0;
 
       goto_loop = 0;
       for(index = 0; index < n_hosts; index++)
@@ -847,238 +847,58 @@ int main(int argc, char *argv[])
       for (index = 0; index < n_hosts; index++)
         {
           hp_tmp = &hp[index];
+
+          /* state 1*/
           if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
               if (get_ts() < hp_tmp->wait)
                 continue;
-#ifndef NO_SSL
-              if (hp_tmp->use_ssl || use_ssl)
-                rc = ph_send_ssl(hp_tmp->ssl_h, &hp_tmp->ph);
-              else
-#endif
-                {
-                  if (!req_sent)
-                    {
-                      hp_tmp->dstart = get_ts();
-                      rc = ph_send(&hp_tmp->ph);
-                    }
-                  else
-                    rc = 1;
-                }
 
-              if (rc < 0) //errors
+              rc = state_write(hp_tmp, req_sent, persistent_connections, &n_partial_write, use_ssl);
+              if (rc == PERS_FAIL) //try again
                 {
-                  if (persistent_connections)
-                    {
-                      if (++hp_tmp->persistent_tries < 2)
-                        {
-                          close(hp_tmp->ph.fd);
-                          hp_tmp->persistent_did_reconnect = 1;
-                          hp_tmp->ph.fd = -1;
-                          hp_tmp->ph.state = 0;
-                          goto_loop = 1;
-                          goto persistent_loop;
-                        }
-                    }
-                  emit_error();
-                  close(hp_tmp->ph.fd);
-                  hp_tmp->ph.fd = -1;
-                  hp_tmp->ph.state = 0;
-                  hp_tmp->err++;
-                  continue;
+                  goto_loop = 1;
+                  goto persistent_loop;
                 }
-              else if (rc == 0) //rc == 0: write not yet completed
+              if (rc == N_PERS_FAIL)
+                continue;
+              if (rc == REQUEST_SENT)
                 {
-                  if (hp_tmp->partial_write == 0)
-                    {
-                      n_partial_write++;
-                      hp_tmp->partial_write = 1;
-                    }
-                  continue;
-                }
-
-              //write completed
-              wait_read++;
-              hp_tmp->ph.state = 2;
-
-              if (hp_tmp->partial_write == 1)
-                {
-                  if (n_partial_write > 0)
-                    n_partial_write--;
-                  hp_tmp->partial_write = 0;
+                  wait_read++;
+                  hp_tmp->ph.state = 2;
                 }
             }
 
-          else if (FD_ISSET(hp_tmp->ph.fd, &rd) && (hp_tmp->ph.state == 2 || hp_tmp->ph.state == 3))
+          else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 2)
             {
+              /* state 2*/
               if (hp_tmp->ph.state == 2)
                 {
-#ifndef NO_SSL
-                  if (hp_tmp->ssl_h)
-                    rc = ph_recv_ssl_HTTP_header(&hp_tmp->ph, hp_tmp->ssl_h, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
-                  else
-#endif
-                    rc = ph_recv_HTTP_header(&hp_tmp->ph, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
-
-                  if (rc < 0)
+                  rc = state_read_header(hp_tmp, persistent_connections, &n_partial_read, show_statuscodes, machine_readable, ask_compression, &is_compressed, show_bytes_xfer);
+                  if (rc == PERS_FAIL)
                     {
-                      if (persistent_connections)
-                        {
-                          if (++hp_tmp->persistent_tries < 2)
-                            {
-                              close(hp_tmp->ph.fd);
-                              hp_tmp->ph.state = 0;
-                              hp_tmp->ph.fd = -1;
-                              hp_tmp->persistent_did_reconnect = 1;
-                              goto_loop = 1;
-                              goto persistent_loop;
-                            }
-                        }
-
-                      if (rc == -1)
-                        snprintf(last_error, ERROR_BUFFER_SIZE, "error receiving reply from host\n");
-
-                      emit_error();
-
-                      close(hp_tmp->ph.fd);
-                      hp_tmp->ph.fd = -1;
-                      hp_tmp->ph.state = 0;
-                      hp_tmp->err++;
-                      continue;
+                      goto_loop = 1;
+                      goto persistent_loop;
                     }
+                  if (rc == RECV_FAIL || rc == PART_READ || rc == CONT_LEN_FAIL)
+                    continue;
 
-                  if (rc == 0) // partial read performed
-                    {
-                      if (hp_tmp->partial_read == 0)
-                        {
-                          n_partial_read++;
-                          hp_tmp->partial_read = 1;
-                        }
-                      continue;
-                    }
-
-                  //complete read header
-                  if (hp_tmp->partial_read == 1)
-                    {
-                      if (n_partial_read > 0)
-                        n_partial_read--;
-                      hp_tmp->partial_read = 0;
-                    }
-                  reply = hp_tmp->header;
-
-                  if ((show_statuscodes || machine_readable) && reply != NULL)
-                    {
-                      /* statuscode is in first line behind
-                       * 'HTTP/1.x'
-                       */
-                      char *dummy = strchr(reply, ' ');
-
-                      if (dummy)
-                        {
-                          hp_tmp->sc = strdup(dummy + 1);
-
-                          /* lines are normally terminated with a
-                           * CR/LF
-                           */
-                          dummy = strchr(hp_tmp->sc, '\r');
-                          if (dummy)
-                            *dummy = 0x00;
-                          dummy = strchr(hp_tmp->sc, '\n');
-                          if (dummy)
-                            *dummy = 0x00;
-                        }
-                    }
-
-                  if (ask_compression && reply != NULL)
-                    {
-                      char *encoding = strstr(reply, "\nContent-Encoding:");
-                      if (encoding)
-                        {
-                          char *dummy = strchr(encoding + 1, '\n');
-                          if (dummy) *dummy = 0x00;
-                          dummy = strchr(hp_tmp->sc, '\r');
-                          if (dummy) *dummy = 0x00;
-
-                          if (strstr(encoding, "gzip") == 0 || strstr(encoding, "deflate") == 0)
-                            {
-                              is_compressed = 1;
-                            }
-                        }
-                    }
-
-                  if (persistent_connections && show_bytes_xfer && reply != NULL)
-                    {
-                      char *length = strstr(reply, "\nContent-Length:");
-                      if (!length)
-                        {
-                          snprintf(last_error, ERROR_BUFFER_SIZE, "'Content-Length'-header missing!\n");
-                          emit_error();
-                          close(hp_tmp->ph.fd);
-                          hp_tmp->ph.fd = -1;
-                          hp_tmp->ph.state = 0;
-                          continue;
-                        }
-                      len = atoi(&length[17]);
-                    }
-
-                  if (reply != NULL)
-                    {
-                      hp_tmp->header_len = (strstr(reply, "\r\n\r\n") - reply) + 4;
-                      free(hp_tmp->header);
-                      hp_tmp->header = NULL;
-                      reply = NULL;
-                    }
-
-                  hp_tmp->dl_start = get_ts(); //Just before the state 3
-                  hp_tmp->bytes_transferred = 0;
-                  if (persistent_connections)
-                    {
-                      if (hp_tmp->cur_limit == -1 || len < hp_tmp->cur_limit)
-                        hp_tmp->cur_limit = len - overflow;
-                    }
                   if (get_instead_of_head && show_Bps)
                     hp_tmp->ph.state = 3;
                   else
                     hp_tmp->ph.state = 4;
+                }
+            }
+          else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 3)
+            {
+              /* state 3 */
+              rc = state_read_body(hp_tmp, Bps_limit);
 
-                } // end state == 2
-
-              else if (hp_tmp->ph.state == 3)
-                {
-                  /* state 3 */
-                  if (get_instead_of_head && show_Bps)
-                    {
-                      hp_tmp->cur_limit = Bps_limit;
-
-                      rc = ph_recv_and_clean(&hp_tmp->ph);
-
-                      if (rc < 0)
-                        hp_tmp->fatal = 1;
-                      else if (rc > 0)
-                        {
-                          hp_tmp->bytes_transferred += rc;
-                          if (hp_tmp->cur_limit == -1 || (hp_tmp->cur_limit != -1 && hp_tmp->bytes_transferred < hp_tmp->cur_limit))
-                            continue;
-                        }
-
-                      if(hp_tmp->fatal)
-                        {
-                          close(hp_tmp->ph.fd);
-                          hp_tmp->ph.fd = -1;
-                          hp_tmp->ph.state = 0;
-                          continue;
-                        }
-
-                      hp_tmp->dl_end = get_ts();
-                      hp_tmp->Bps = hp_tmp->bytes_transferred / max(hp_tmp->dl_end - hp_tmp->dl_start, 0.000001);
-                      hp_tmp->Bps_min = min(hp_tmp->Bps_min, hp_tmp->Bps);
-                      hp_tmp->Bps_max = max(hp_tmp->Bps_max, hp_tmp->Bps);
-                      hp_tmp->Bps_avg += hp_tmp->Bps;
-                    }
-                  hp_tmp->ph.state = 4;
-                } // end state 3
-            }//end read state
-
+              if (rc == RECV_FAIL || rc == PART_READ)
+                  continue;              
+              hp_tmp->ph.state = 4;
+            } // end state 3
+          
           /* show result */
           if (hp_tmp->ph.state == 4)
             {
@@ -1221,6 +1041,7 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
+      hp_tmp = &hp[index];
       if (hp_tmp->ok){
         hp_tmp->avg_httping_time = hp_tmp->avg / (double)hp_tmp->ok;
         ok++;
@@ -1244,13 +1065,13 @@ int main(int argc, char *argv[])
           if (hp_tmp->ok > 0)
             {
               printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp_tmp->min, hp_tmp->avg_httping_time, hp_tmp->max);
-
+              
               if (show_Bps)
                 printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", hp_tmp->Bps_min / 1024, (int)(hp_tmp->Bps_avg / hp_tmp->ok) / 1024, hp_tmp->Bps_max / 1024);
             }
         }
     }
-
+  
   ok = 0;
   type_err = 0;
   freeaddrinfo(ai);
@@ -1266,7 +1087,7 @@ int main(int argc, char *argv[])
 
       if(type_err != 0) //there was at least one error
         continue;
-      
+
       if (nagios_mode == 1)
         {
           if (hp_tmp->ok == 0) //connection not valid

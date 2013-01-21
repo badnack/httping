@@ -13,6 +13,9 @@
    files in the program, then also delete it here.
 */
 
+#ifndef HOSTPARAM_INCLUDE
+#define HOSTPARAM_INCLUDE
+
 #include <arpa/inet.h>
 #ifndef NO_SSL
 #include <openssl/ssl.h>
@@ -53,3 +56,5 @@ struct host_param {
 
 void hp_set_start_values(host_param* hp);
 int hp_max_fd(host_param *hp, int n);
+
+#endif

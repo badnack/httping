@@ -12,6 +12,10 @@
    version.  If you delete this exception statement from all source
    files in the program, then also delete it here.
 */
+
+#ifndef HANDLER_INCLUDE
+#define HANDLER_INCLUDE
+
 #include <openssl/ssl.h>
 #include "buffer.h"
 
@@ -32,3 +36,5 @@ int ph_recv_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overfl
 int ph_recv_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow);
 int ph_recv_HTTP(ping_handler* ph);
 int ph_recv_and_clean(ping_handler* ph);
+
+#endif
