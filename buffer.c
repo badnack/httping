@@ -5,177 +5,222 @@
 #include <string.h>
 #include <unistd.h>
 
-ping_buffer* pb_create(int size)
+int pb_init(ping_buffer* pb, int req_size, int rep_size)
 {
-  ping_buffer* pb;
 
-  if ((pb = (ping_buffer*) malloc(sizeof (ping_buffer) + (sizeof (char) * size))) == NULL)
-    return NULL;
+  if (pb == NULL)
+    return -1;
 
-  memset(pb, 0, sizeof (ping_buffer) + (sizeof (char) * size));
-  pb->size = size;
-  pb->available = 0;
-  pb->pnt = 0;
-  pb->cnt = 0;
+  pb->reply = pb->request = NULL;
 
-  return pb;
+  if ((pb->request = (_buffer*)malloc(sizeof(_buffer) + (sizeof (char) * req_size))) == NULL)
+      return -1;
+  if ((pb->reply = (_buffer*)malloc(sizeof(_buffer) + (sizeof (char) * rep_size))) == NULL)
+    {
+      free(pb->request);
+      pb->request = NULL;
+      return -1;
+    }
+
+  memset(pb->request, 0, sizeof (_buffer) + (sizeof (char) * req_size));
+  memset(pb->reply, 0, sizeof (_buffer) + (sizeof (char) * rep_size));
+
+  pb->request->size = req_size;
+  pb->reply->size = rep_size;
+
+  return 0;
 }
 
-int pb_write(ping_buffer* pb, char* fmt, ...)
+void pb_free(ping_buffer* pb)
+{
+  if (pb == NULL)
+    return;
+
+  if (pb->reply != NULL)
+    free(pb->reply);
+  if (pb->request != NULL)
+    free(pb->request);
+}
+
+
+int pb_write_request(ping_buffer* pb, int mode, char* fmt, ...)
 {
   char formatted_string[FMT_SIZE];
   va_list argptr;
   int to_write;
-  int w_pnt, len, rem_len;
+  int w_pnt, len;
+  _buffer* req;
 
-  if (pb == NULL)
-    return 0;
+  if (pb == NULL || (req = pb->request) == NULL)
+    return -1;
+  if (req->cnt == req->size && mode)
+    return -1;
 
   va_start(argptr,fmt);
   vsnprintf(formatted_string, FMT_SIZE, fmt, argptr);
   va_end(argptr);
   len = strnlen(formatted_string, FMT_SIZE);
 
-  rem_len = len;
+  if (!mode)
+    req->pnt = req->available = req->cnt = 0;
 
-  w_pnt = pb->available;
-  to_write = (pb->available >= pb->pnt) ? (pb->size - pb->available) : pb->pnt - pb->available;
-  to_write = (to_write > rem_len) ? rem_len : to_write;
-  memmove(pb->buf + w_pnt, formatted_string, to_write); //according man it should never fails
-  pb->available = (pb->available + to_write) % pb->size;
-  rem_len -= to_write;
-  pb->cnt += to_write;
+  w_pnt = req->available;
+  to_write = req->size - req->available;
+  to_write = (to_write > len) ? len : to_write;
+  memmove(req->buf + w_pnt, formatted_string, to_write); //according man it should never fails
+  req->available = (req->available + to_write) % req->size;
+  req->cnt += to_write;
 
-  return len - rem_len;
+  return to_write;
 }
 
-int pb_read(ping_buffer* pb, char** buffer, int buf_start) //set dim to read? FIXME
+int pb_read_reply(ping_buffer* pb, char* buffer, int n)
 {
-  int r_pnt, size;
-  int to_read;
+  int r_pnt, buf_pnt, ret;
+  int to_read, tot_to_read;
+  _buffer* rep;
 
-  if (pb == NULL)
+  if (pb == NULL || (rep = pb->reply) == NULL)
     return -1;
-  if (pb->cnt == 0)
+  if (rep->cnt == 0)
     return 0;
 
-  r_pnt = pb->pnt;
-  size = buf_start + pb->cnt;
-  if ((*buffer = (char*)realloc(*buffer, size + 1)) == NULL)
-    return -1;
+  r_pnt = rep->pnt;
+  buf_pnt = 0;
+  tot_to_read = (rep->cnt > n) ? n : rep->cnt;
+  ret = tot_to_read;
 
-  r_pnt = pb->pnt;
-  to_read = (pb->pnt >= pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
-  to_read = (pb->size) ? pb->cnt : to_read;
-  memmove(*buffer + buf_start, pb->buf + r_pnt, to_read); //according man it should never fails
-  pb->pnt = (pb->pnt + to_read) % pb->size;
-  r_pnt = pb->pnt;
-  buf_start += to_read;
-  pb->cnt -= to_read;
-  (*buffer)[size] = '\0';
+  while (tot_to_read > 0)
+    {
+      to_read = (rep->pnt >= rep->available) ? rep->size - rep->pnt : rep->available - rep->pnt;
+      to_read = (tot_to_read > to_read) ? to_read : tot_to_read;
+      memmove(buffer + buf_pnt, rep->buf + r_pnt, to_read); //according man it should never fails
+      rep->pnt = (rep->pnt + to_read) % rep->size;
+      r_pnt = rep->pnt;
+      buf_pnt += to_read;
+      rep->cnt -= to_read;
+      tot_to_read -= to_read;
+    }
 
-  return to_read;
+  return ret;
 }
 
-int pb_socket_send(ping_buffer* pb, int sd)
+int pb_socket_send_request(ping_buffer* pb, int sd)
 {
   ssize_t rc;
   int to_snd;
+  _buffer* req;
 
-  if (pb == NULL)
+  if (pb == NULL || (req = pb->request) == NULL || !req->cnt)
     return -1;
-  if (pb->cnt == 0)
-    return 1;
 
-  to_snd = (pb->available > pb->pnt) ? (pb->available - pb->pnt) : pb->size - pb->pnt;
-  to_snd = (to_snd > MAX_SEND) ? MAX_SEND : to_snd;
-  rc = write(sd, (char*)pb->buf + pb->pnt, to_snd);
+  to_snd = ((req->cnt - req->pnt) > MAX_SEND) ? MAX_SEND : (req->cnt - req->pnt);
+  rc = write(sd, (char*)req->buf + req->pnt, to_snd);
 
   if (rc == -1)
     return -1;
   if (rc == 0)
     return -2;
 
-  pb->pnt =  (pb->pnt + rc) % pb->size;
-  pb->cnt -= rc;
+  req->pnt = (req->pnt + rc) % req->cnt;
+  if (rc > 0 && req->pnt == 0)
+    return 1;
 
-  return rc;
+  return 0;
 }
 
-int pb_ssl_send(ping_buffer* pb, SSL* ssl_h)
+int pb_ssl_send_request(ping_buffer* pb, SSL* ssl_h)
 {
   ssize_t rc;
   int to_snd;
+  _buffer* req;
 
-  if (pb == NULL || ssl_h == NULL)
+  if (pb == NULL || (req = pb->request) == NULL || !req->cnt)
     return -1;
-  if (pb->cnt == 0)
-    return 1;
 
-  to_snd = (pb->available > pb->pnt) ? (pb->available - pb->pnt) : pb->size - pb->pnt;
-  to_snd = (to_snd > MAX_SEND) ? MAX_SEND : to_snd;
-  rc = SSL_write(ssl_h, (char*)pb->buf + pb->pnt, to_snd);
+  to_snd = ((req->cnt - req->pnt) > MAX_SEND) ? MAX_SEND : (req->cnt - req->pnt);
+  rc = SSL_write(ssl_h, (char*)req->buf + req->pnt, to_snd);
 
   if (rc == -1)
     return -1;
   if (rc == 0)
     return -2;
 
+  req->pnt = (req->pnt + rc) % req->cnt;
+  if (rc > 0 && req->pnt == 0)
+    return 1;
 
-  pb->pnt =  (pb->pnt + rc) % pb->size;
-  pb->cnt -= rc;
+  return 0;
+}
+
+int pb_socket_recv_reply(ping_buffer* pb, int sd)
+{
+  int rc, old_pnt;
+  int to_recv;
+  _buffer* rep;
+
+  if (pb == NULL || (rep = pb->reply) == NULL)
+    return -1;
+  if (rep->cnt == rep->size) /* read required */
+    return -2;
+
+  to_recv = (rep->available >= rep->pnt) ? rep->size - rep->available : rep->pnt - rep->available;
+  to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
+
+  old_pnt = rep->pnt;
+
+  if ((rc = read(sd, (char*)rep->buf + rep->available, to_recv)) < 0)
+    {
+      rep->pnt = old_pnt; //see man 2 read
+      return -1;
+    }
+
+  rep->available = (rep->available + rc) % rep->size;
+  rep->cnt += rc;
 
   return rc;
 }
 
-int pb_socket_recv(ping_buffer* pb, int sd)
+int pb_ssl_recv_reply(ping_buffer* pb, SSL* ssl_h)
 {
   int rc, old_pnt;
   int to_recv;
+  _buffer* rep;
 
-  if (pb == NULL)
+  if (pb == NULL || (rep = pb->reply) == NULL)
     return -1;
-  if (pb->cnt == pb->size) /* read required */
+  if (rep->cnt == rep->size) /* read required */
     return -2;
 
-  to_recv = (pb->available >= pb->pnt) ? pb->size - pb->available : pb->pnt - pb->available;
+  to_recv = (rep->available >= rep->pnt) ? rep->size - rep->available : rep->pnt - rep->available;
   to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
-  old_pnt = pb->pnt;
 
-  if ((rc = read(sd, (char*)pb->buf + pb->available, to_recv)) < 0)
+  old_pnt = rep->pnt;
+
+  if ((rc = SSL_read(ssl_h, (char*)rep->buf + rep->available, to_recv)) < 0)
     {
-      pb->pnt = old_pnt; //see man 2 read
+      rep->pnt = old_pnt; //see man 2 read
       return -1;
     }
 
-  pb->available = (pb->available + rc) % pb->size;
-  pb->cnt += rc;
+  rep->available = (rep->available + rc) % rep->size;
+  rep->cnt += rc;
 
   return rc;
 }
 
-int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h)
+int pb_get_cnt_reply(ping_buffer* pb)
 {
-  int rc, old_pnt;
-  int to_recv;
-
-  if (pb == NULL)
+  if (pb == NULL || pb->reply == NULL)
     return -1;
-  if (pb->cnt == pb->size || ssl_h == NULL) /* read required */
-    return -2;
 
-  to_recv = (pb->available >= pb->pnt) ? pb->size - pb->available : pb->pnt - pb->available;
-  to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
-  old_pnt = pb->pnt;
+  return pb->reply->cnt;
+}
 
-  if ((rc = SSL_read(ssl_h, (char*) pb->buf + pb->available, to_recv)) < 0)
-    {
-      pb->pnt = old_pnt; //see man 2 read
-      return -1;
-    }
+int pb_get_cnt_request(ping_buffer* pb)
+{
+  if (pb == NULL || pb->request == NULL)
+    return -1;
 
-  pb->available = (pb->available + rc) % pb->size;
-  pb->cnt += rc;
-
-  return rc;
+  return pb->request->cnt;
 }

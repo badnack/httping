@@ -4,109 +4,79 @@
 #include <string.h>
 #include <errno.h>
 #include "handler.h"
-#include "buffer.h"
 #include "gen.h"
 
 extern char last_error[];
 
 int ph_init(ping_handler *ph, int s_size, int r_size)
 {
-  if (ph == NULL)
+  if (ph == NULL || s_size <= 0 || r_size <= 0)
     return -1;
 
   ph->state = 0;
   ph->fd = -1;
-  ph->i_req_pnt = ph->i_req_cnt = 0;
-  ph->reply = ph->request = NULL;
 
-  if ((s_size > 0) && (ph->reply = (ping_buffer*) pb_create(s_size)) == NULL)
-    return -1;
-  if ((r_size > 0) && (ph->request = (ping_buffer*) pb_create(r_size)) == NULL)
-    return -1;
-
-  return 0;
+  return pb_init(&ph->pb, s_size, r_size);
 }
 
 void ph_free(ping_handler *ph)
 {
   if (ph == NULL)
     return;
-  if (ph->reply != NULL)
-      free(ph->reply);
-  if (ph->request != NULL)
-      free(ph->request);
+  pb_free(&ph->pb);
 }
 
-//FIXME: follow the same read algorithm?
-// Therefore: pass to the function a buffer which is write into the one of the ping_buffer,
-// then then send it.
-int ph_write(ping_handler* ph) //FIXME: return length written
+int ph_send(ping_handler* ph) //FIXME: return length written
 {
   int rc;
 
   if (ph == NULL)
     return -1;
 
-  rc = pb_socket_send(((ping_buffer*)ph->request), ph->fd);
+  rc = pb_socket_send_request(&ph->pb, ph->fd);
 
   if (rc == -1)
-    snprintf(last_error, ERROR_BUFFER_SIZE, "ph_write::write failed: %s\n", strerror(errno));
+    snprintf(last_error, ERROR_BUFFER_SIZE, "ph_send::write failed: %s\n", strerror(errno));
   else if (rc == -2)
     snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
-  else /* succesfully transferred bytes */
-    {
-      if (((ping_buffer*)ph->request)->cnt <= 0)
-        {
-          ((ping_buffer*)ph->request)->pnt = ph->i_req_pnt; /* the request is always the same */
-          ((ping_buffer*)ph->request)->cnt = ph->i_req_cnt;
-          rc = 1;
-        }
-      else
-        rc = 0;
-    }
 
   return rc;
 }
 
-int ph_write_ssl(SSL* ssl_h, ping_handler* ph)
+int ph_send_ssl(SSL* ssl_h, ping_handler* ph)
 {
   int rc;
 
   if (ph == NULL)
     return -1;
 
-  rc = pb_ssl_send(((ping_buffer*)ph->request), ssl_h);
+  rc = pb_ssl_send_request(&ph->pb, ssl_h);
 
   if (rc == -1)
-    snprintf(last_error, ERROR_BUFFER_SIZE, "ph_write::write failed: %s\n", strerror(errno));
+    snprintf(last_error, ERROR_BUFFER_SIZE, "ph_send_ssl::write failed: %s\n", strerror(errno));
   else if (rc == -2)
     snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
-  else /* succesfully transferred bytes */
-    {
-      if (((ping_buffer*)ph->request)->cnt <= 0)
-        {
-          ((ping_buffer*)ph->request)->pnt = ph->i_req_pnt; /* the request is always the same */
-          ((ping_buffer*)ph->request)->cnt = ph->i_req_cnt;
-          rc = 1;
-        }
-      else
-        rc = 0;
-    }
 
   return rc;
 }
 
-int ph_get_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow)
+int ph_recv_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow)
 {
-  int rc, ret;
+  int rc, ret, cnt;
   char* term;
 
-  rc = pb_socket_recv(ph->reply, ph->fd);
-  if (rc == -1)	/* socket closed before request was read? */
+  rc = pb_socket_recv_reply(&ph->pb, ph->fd);
+  if (rc == -1)	/* socket closed before request was reaad? */
     return -1;
 
-  ret = pb_read(ph->reply, header, *h_len);
+  if (*h_len < 0)
+    *h_len = 0;
+
+  *header = realloc(*header, *h_len + (cnt = pb_get_cnt_reply(&ph->pb)) + 1);
+  ret = pb_read_reply(&ph->pb, *header + *h_len, cnt);
   *h_len += ret;
+  (*header)[*h_len] = '\0';
+
   if ((term = strstr(*header, "\r\n\r\n")) != NULL)
     {
       *overflow = *h_len - (term - *header + 4);
@@ -118,19 +88,24 @@ int ph_get_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflo
   return 0;
 }
 
-int ph_get_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow)
+int ph_recv_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow)
 {
-  int rc, ret;
+  int rc, ret, cnt;
   char* term;
 
-  rc = pb_ssl_recv(ph->reply, ssl_h);
+  rc = pb_ssl_recv_reply(&ph->pb, ssl_h);
 
   if (rc == -1)	/* socket closed before request was read? */
     return -1;
-  if (rc == 0)
 
-  ret = pb_read(ph->reply, header, *h_len);
+  if (*h_len < 0)
+    *h_len = 0;
+
+  *header = (char*)realloc(*header, *h_len + (cnt = pb_get_cnt_reply(&ph->pb)) + 1);
+  ret = pb_read_reply(&ph->pb, *header + *h_len, cnt);
   *h_len += ret;
+  (*header)[*h_len] = '\0';
+
   if ((term = strstr(*header, "\r\n\r\n")) != NULL)
     {
       *overflow = *h_len - (term - *header + 4);
@@ -142,21 +117,33 @@ int ph_get_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_l
   return 0;
 }
 
-int ph_read_HTTP(ping_handler* ph)
+int ph_recv_HTTP_body(ping_handler* ph, char** buffer)
 {
   int rc, cnt;
-  char* body = NULL;
 
   if (ph == NULL)
     return -1;
 
-  rc = pb_socket_recv(ph->reply, ph->fd);
+  rc = pb_socket_recv_reply(&ph->pb, ph->fd);
   if (rc == -1)	/* socket closed before request was read? */
     return -1;
 
-  cnt = pb_read(ph->reply, &body, 0);
-  if (body != NULL)
-    free(body);
+  if (buffer != NULL)
+    {
+      *buffer = (char*)realloc(*buffer, (cnt = pb_get_cnt_reply(&ph->pb)));
+      cnt = pb_read_reply(&ph->pb, *buffer, cnt);
+    }
 
   return cnt;
+}
+
+int ph_recv_and_clean(ping_handler* ph)
+{
+  char* dummy = NULL;
+  int rc;
+
+  rc = ph_recv_HTTP_body(ph, &dummy);
+  if (/* rc > 0 &&  */dummy != NULL) //in order to empty the ping_buffer
+    free(dummy);
+  return rc;
 }

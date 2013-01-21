@@ -18,9 +18,10 @@
 #define MAX_SEND 512
 #define MAX_RECV 512
 
+typedef struct _buffer _buffer;
 typedef struct ping_buffer ping_buffer;
 
-struct ping_buffer{
+struct _buffer{
   int size;
   int available;
   int pnt;
@@ -29,10 +30,18 @@ struct ping_buffer{
   char buf[0];
 };
 
-ping_buffer* pb_create(int);
-int pb_write(ping_buffer* pb, char* fmt, ...);
-int pb_socket_send(ping_buffer* pb, int sd);
-int pb_read(ping_buffer* pb, char** buffer, int buf_start);
-int pb_ssl_send(ping_buffer* pb, SSL* ssl_h);
-int pb_socket_recv(ping_buffer* pb, int sd);
-int pb_ssl_recv(ping_buffer* pb, SSL* ssl_h);
+struct ping_buffer{
+  _buffer* request;
+  _buffer* reply;
+};
+
+int pb_init(ping_buffer* pb, int req_size, int rep_size);
+void pb_free(ping_buffer* pb);
+int pb_write_request(ping_buffer* pb, int mode, char* fmt, ...);
+int pb_read_reply(ping_buffer* pb, char* buffer, int n);
+int pb_socket_send_request(ping_buffer* pb, int sd);
+int pb_ssl_send_request(ping_buffer* pb, SSL* ssl_h);
+int pb_socket_recv_reply(ping_buffer* pb, int sd);
+int pb_ssl_recv_reply(ping_buffer* pb, SSL* ssl_h);
+int pb_get_cnt_reply(ping_buffer* pb);
+int pb_get_cnt_request(ping_buffer* pb);

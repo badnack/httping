@@ -13,24 +13,22 @@
    files in the program, then also delete it here.
 */
 #include <openssl/ssl.h>
+#include "buffer.h"
 
 typedef struct ping_handler ping_handler;
 
 struct ping_handler {
   int state;
   int fd;
-  int i_req_pnt, i_req_cnt; /* two different buffer because
-                               the request is always the same
-                               once is fixed */
-  void* request;
-  void* reply;
+  ping_buffer pb;
 };
 
 int ph_init(ping_handler *ph, int s_size, int r_size);
 void ph_free(ping_handler *ph);
 int ph_read(ping_handler* ph);
-int ph_write(ping_handler* ph);
-int ph_write_ssl(SSL* ssl_h, ping_handler* ph);
-int ph_get_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow);
-int ph_get_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow);
-int ph_read_HTTP(ping_handler* ph);
+int ph_send(ping_handler* ph);
+int ph_send_ssl(SSL* ssl_h, ping_handler* ph);
+int ph_recv_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow);
+int ph_recv_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow);
+int ph_recv_HTTP(ping_handler* ph);
+int ph_recv_and_clean(ping_handler* ph);

@@ -41,7 +41,7 @@
 #include "utils.h"
 #include "error.h"
 /* #include "handler.h" */
-#include "buffer.h"
+/* #include "buffer.h" */
 #include "hostparam.h"
 
 #define BUF_SIZE 4096
@@ -632,7 +632,7 @@ int main(int argc, char *argv[])
       if (ph_init(&hp[index].ph, BUF_SIZE, strlen(get) + 8192) < 0)
         error_exit("\nSystem error\n");
       if (proxyhost)
-        pb_write(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
+        pb_write_request(&hp[index].ph.pb, 1, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
       else
         {
           char *dummy = get, *slash;
@@ -643,24 +643,24 @@ int main(int argc, char *argv[])
 
           slash = strchr(dummy, '/');
           if (slash)
-            pb_write(hp[index].ph.request, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
+            pb_write_request(&hp[index].ph.pb, 1, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
           else
-            pb_write(hp[index].ph.request, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
+            pb_write_request(&hp[index].ph.pb, 1, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
         }
       if (useragent)
-        pb_write(hp[index].ph.request, "User-Agent: %s\r\n", useragent);
+        pb_write_request(&hp[index].ph.pb, 1, "User-Agent: %s\r\n", useragent);
       else
-        pb_write(hp[index].ph.request, "User-Agent: HTTPing v" VERSION "\r\n");
-      pb_write(hp[index].ph.request, "Host: %s\r\n", hp[index].name);
+        pb_write_request(&hp[index].ph.pb, 1, "User-Agent: HTTPing v" VERSION "\r\n");
+      pb_write_request(&hp[index].ph.pb, 1, "Host: %s\r\n", hp[index].name);
       if (referer)
-        pb_write(hp[index].ph.request, "Referer: %s\r\n", referer);
+        pb_write_request(&hp[index].ph.pb, 1, "Referer: %s\r\n", referer);
       if (ask_compression)
-        pb_write(hp[index].ph.request, "Accept-Encoding: gzip,deflate\r\n");
+        pb_write_request(&hp[index].ph.pb, 1, "Accept-Encoding: gzip,deflate\r\n");
 
       if (no_cache)
         {
-          pb_write(hp[index].ph.request, "Pragma: no-cache\r\n");
-          pb_write(hp[index].ph.request, "Cache-Control: no-cache\r\n");
+          pb_write_request(&hp[index].ph.pb, 1, "Pragma: no-cache\r\n");
+          pb_write_request(&hp[index].ph.pb, 1, "Cache-Control: no-cache\r\n");
         }
 
       /* Basic Authentification */
@@ -671,19 +671,18 @@ int main(int argc, char *argv[])
           error_exit("Basic Authnetication (-A) can only be used with a username and/or password (-U -P) ");
         sprintf(auth_string,"%s:%s",usr,pwd);
         enc_b64(auth_string, strlen(auth_string), b64_auth_string);
-        pb_write(hp[index].ph.request, "Authorization: Basic %s\r\n", b64_auth_string);
+        pb_write_request(&hp[index].ph.pb, 1, "Authorization: Basic %s\r\n", b64_auth_string);
       }
 
       /* Cookie Insertion */
       if (cookie) {
-        pb_write(hp[index].ph.request, "Cookie: %s;\r\n", cookie);
+        pb_write_request(&hp[index].ph.pb, 1, "Cookie: %s;\r\n", cookie);
       }
 
       if (persistent_connections)
-        pb_write(hp[index].ph.request, "Connection: keep-alive\r\n");
+        pb_write_request(&hp[index].ph.pb, 1, "Connection: keep-alive\r\n");
 
-      pb_write(hp[index].ph.request, "\r\n");
-      hp[index].ph.i_req_cnt = ((ping_buffer*)hp[index].ph.request)->cnt;
+      pb_write_request(&hp[index].ph.pb, 1, "\r\n");
 
       if (!quiet && !machine_readable && !nagios_mode )
         printf("PING %s:%d (%s):\n", hp[index].name, hp[index].portnr, get);
@@ -754,7 +753,7 @@ int main(int argc, char *argv[])
               if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
                 {
                   hp[index].dstart = get_ts();
-                  hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((ping_buffer*)(hp[index].ph.request))->buf, ((ping_buffer*)(hp[index].ph.request))->available, &req_sent); //FIXME
+                 hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((_buffer*)(hp[index].ph.pb.request))->buf, ((_buffer*)(hp[index].ph.pb.request))->available, &req_sent); //FIXME
                 }
               if (hp[index].ph.fd == -3)
                   continue;
@@ -859,14 +858,14 @@ int main(int argc, char *argv[])
                 continue;
 #ifndef NO_SSL
               if (hp[index].use_ssl || use_ssl)
-                rc = ph_write_ssl(hp[index].ssl_h, &hp[index].ph);
+                rc = ph_send_ssl(hp[index].ssl_h, &hp[index].ph);
               else
 #endif
                 {
                   if (!req_sent)
                     {
                       hp[index].dstart = get_ts();
-                      rc = ph_write(&hp[index].ph);
+                      rc = ph_send(&hp[index].ph);
                     }
                   else
                     rc = 1;
@@ -921,10 +920,10 @@ int main(int argc, char *argv[])
                 {
 #ifndef NO_SSL
                   if (hp[index].ssl_h)
-                    rc = ph_get_ssl_HTTP_header(&hp[index].ph, hp[index].ssl_h, &hp[index].header, &hp[index].header_len, &overflow); //FIXME
+                    rc = ph_recv_ssl_HTTP_header(&hp[index].ph, hp[index].ssl_h, &hp[index].header, &hp[index].header_len, &overflow); //FIXME
                   else
 #endif
-                    rc = ph_get_HTTP_header(&hp[index].ph, &hp[index].header, &hp[index].header_len, &overflow); //FIXME
+                    rc = ph_recv_HTTP_header(&hp[index].ph, &hp[index].header, &hp[index].header_len, &overflow); //FIXME
 
                   if (rc < 0)
                     {
@@ -1051,7 +1050,8 @@ int main(int argc, char *argv[])
                   if (get_instead_of_head && show_Bps)
                     {
                       hp[index].cur_limit = Bps_limit;
-                      rc = ph_read_HTTP(&hp[index].ph);
+ 
+                      rc = ph_recv_and_clean(&hp[index].ph);
 
                       if (rc < 0)
                         hp[index].fatal = 1;
@@ -1261,6 +1261,8 @@ int main(int argc, char *argv[])
     {
       ph_free(&hp[index].ph);
       free(hp[index].name);
+      if (hp[index].header != NULL)
+        free(hp[index].header);
 
       if(type_err != 0) //there was at least one error
         continue;
