@@ -40,7 +40,7 @@ void ph_free(ping_handler *ph)
 //FIXME: follow the same read algorithm?
 // Therefore: pass to the function a buffer which is write into the one of the ping_buffer,
 // then then send it.
-int ph_write(ping_handler* ph)
+int ph_write(ping_handler* ph) //FIXME: return length written
 {
   int rc;
 
@@ -96,13 +96,13 @@ int ph_write_ssl(SSL* ssl_h, ping_handler* ph)
   return rc;
 }
 
-int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow)
+int ph_get_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow)
 {
   int rc, ret;
   char* term;
 
   rc = pb_socket_recv(ph->reply, ph->fd);
-  if (rc == 0 || rc == -1)	/* socket closed before request was read? */
+  if (rc == -1)	/* socket closed before request was read? */
     return -1;
 
   ret = pb_read(ph->reply, header, *h_len);
@@ -118,14 +118,16 @@ int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overfl
   return 0;
 }
 
-int ph_read_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow)
+int ph_get_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow)
 {
   int rc, ret;
   char* term;
 
   rc = pb_ssl_recv(ph->reply, ssl_h);
-  if (rc == 0 || rc == -1)	/* socket closed before request was read? */
+
+  if (rc == -1)	/* socket closed before request was read? */
     return -1;
+  if (rc == 0)
 
   ret = pb_read(ph->reply, header, *h_len);
   *h_len += ret;
@@ -138,4 +140,23 @@ int ph_read_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_
   *overflow = 0;
 
   return 0;
+}
+
+int ph_read_HTTP(ping_handler* ph)
+{
+  int rc, cnt;
+  char* body = NULL;
+
+  if (ph == NULL)
+    return -1;
+
+  rc = pb_socket_recv(ph->reply, ph->fd);
+  if (rc == -1)	/* socket closed before request was read? */
+    return -1;
+
+  cnt = pb_read(ph->reply, &body, 0);
+  if (body != NULL)
+    free(body);
+
+  return cnt;
 }

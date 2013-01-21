@@ -24,7 +24,7 @@ typedef struct host_param host_param;
 struct host_param {
   int ok, err;
   int partial_write, partial_read;
-  int Bps_min, Bps_max;
+  int Bps_min, Bps_max, Bps;
   long long int Bps_avg;
   double avg, min, max;
   double avg_httping_time;
@@ -44,6 +44,7 @@ struct host_param {
   int persistent_tries;
   char* header;
   int header_len;
+  long long int bytes_transferred;
 #ifndef NO_SSL
   SSL_CTX *client_ctx;
 #endif

@@ -5,30 +5,6 @@
 #include <string.h>
 #include <unistd.h>
 
-static int awrite(ping_buffer* pb, char* buf, int buf_len)
-{
-  int to_write;
-  int w_pnt, len;
-
-  if (pb == NULL)
-    return -1;
-
-  len = buf_len;
-
-  while (buf_len > 0 && pb->cnt < pb->size)
-    {
-      w_pnt = pb->available;
-      to_write = (pb->available >= pb->pnt) ? (pb->size - pb->available) : pb->pnt - pb->available;
-      to_write = (to_write > buf_len) ? buf_len : to_write;
-      memmove(pb->buf + w_pnt, buf, to_write);
-      pb->available = (pb->available + to_write) % pb->size;
-      buf_len -= to_write;
-      pb->cnt += to_write;
-    }
-
-  return len - buf_len;
-}
-
 ping_buffer* pb_create(int size)
 {
   ping_buffer* pb;
@@ -49,7 +25,8 @@ int pb_write(ping_buffer* pb, char* fmt, ...)
 {
   char formatted_string[FMT_SIZE];
   va_list argptr;
-  int len;
+  int to_write;
+  int w_pnt, len, rem_len;
 
   if (pb == NULL)
     return 0;
@@ -59,13 +36,23 @@ int pb_write(ping_buffer* pb, char* fmt, ...)
   va_end(argptr);
   len = strnlen(formatted_string, FMT_SIZE);
 
-  return awrite(pb, formatted_string, len);
+  rem_len = len;
+
+  w_pnt = pb->available;
+  to_write = (pb->available >= pb->pnt) ? (pb->size - pb->available) : pb->pnt - pb->available;
+  to_write = (to_write > rem_len) ? rem_len : to_write;
+  memmove(pb->buf + w_pnt, formatted_string, to_write); //according man it should never fails
+  pb->available = (pb->available + to_write) % pb->size;
+  rem_len -= to_write;
+  pb->cnt += to_write;
+
+  return len - rem_len;
 }
 
 int pb_read(ping_buffer* pb, char** buffer, int buf_start) //set dim to read? FIXME
 {
   int r_pnt, size;
-  int to_read, tot;
+  int to_read;
 
   if (pb == NULL)
     return -1;
@@ -73,27 +60,21 @@ int pb_read(ping_buffer* pb, char** buffer, int buf_start) //set dim to read? FI
     return 0;
 
   r_pnt = pb->pnt;
-  tot = 0;
   size = buf_start + pb->cnt;
   if ((*buffer = (char*)realloc(*buffer, size + 1)) == NULL)
     return -1;
 
-  while (pb->cnt > 0)
-    {
-      r_pnt = pb->pnt;
-      to_read = (pb->pnt >= pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
-      to_read = (pb->size) ? pb->cnt : to_read;
-      memmove(*buffer + buf_start, pb->buf + r_pnt, to_read);
-      pb->pnt = (pb->pnt + to_read) % pb->size;
-      r_pnt = pb->pnt;
-      buf_start += to_read;
-      pb->cnt -= to_read;
-      tot += to_read;
-    }
-
+  r_pnt = pb->pnt;
+  to_read = (pb->pnt >= pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
+  to_read = (pb->size) ? pb->cnt : to_read;
+  memmove(*buffer + buf_start, pb->buf + r_pnt, to_read); //according man it should never fails
+  pb->pnt = (pb->pnt + to_read) % pb->size;
+  r_pnt = pb->pnt;
+  buf_start += to_read;
+  pb->cnt -= to_read;
   (*buffer)[size] = '\0';
 
-  return tot;
+  return to_read;
 }
 
 int pb_socket_send(ping_buffer* pb, int sd)
