@@ -40,8 +40,6 @@
 #include "res.h"
 #include "utils.h"
 #include "error.h"
-/* #include "handler.h" */
-/* #include "buffer.h" */
 #include "hostparam.h"
 
 #define BUF_SIZE 4096
@@ -743,7 +741,6 @@ int main(int argc, char *argv[])
                       hp[index].have_resolved = 1;
                       continue;
                     }
-
                   ai_use = select_resolved_host(ai, use_ipv6);
                   get_addr(ai_use, &hp[index].addr);
                 }
@@ -842,14 +839,12 @@ int main(int argc, char *argv[])
               break;
             }
         }//end for
-
       if ((ret = select(max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
           if (ret == 0)
             error_exit("\nNo more hosts available\n");
           error_exit("\nSystem error (select)\n"); //BUG: ctrl+c sometimes bring here!
         }
-
       for (index = 0; index < n_hosts; index++)
         {
           if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
@@ -1034,7 +1029,6 @@ int main(int argc, char *argv[])
                       reply = NULL;
                     }
 
-                  hp[index].ph.state = 3;
                   hp[index].dl_start = get_ts(); //Just before the state 3
                   hp[index].bytes_transferred = 0;
                   if (persistent_connections)
@@ -1042,6 +1036,11 @@ int main(int argc, char *argv[])
                       if (hp[index].cur_limit == -1 || len < hp[index].cur_limit)
                         hp[index].cur_limit = len - overflow;
                     }
+                  if (get_instead_of_head && show_Bps)
+                    hp[index].ph.state = 3;
+                  else
+                    hp[index].ph.state = 4;
+
                 } // end state == 2
 
               else if (hp[index].ph.state == 3)
@@ -1050,7 +1049,7 @@ int main(int argc, char *argv[])
                   if (get_instead_of_head && show_Bps)
                     {
                       hp[index].cur_limit = Bps_limit;
- 
+
                       rc = ph_recv_and_clean(&hp[index].ph);
 
                       if (rc < 0)
@@ -1077,13 +1076,13 @@ int main(int argc, char *argv[])
                       hp[index].Bps_avg += hp[index].Bps;
                     }
                   hp[index].ph.state = 4;
-                  hp[index].dend = get_ts();
                 } // end state 3
             }//end read state
 
           /* show result */
           if (hp[index].ph.state == 4)
             {
+              hp[index].dend = get_ts();
               hp[index].ok++;
               hp[index].ph.state = 0;
               hp[index].curncount++;
