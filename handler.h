@@ -16,11 +16,13 @@
 
 typedef struct ping_handler ping_handler;
 
-struct ping_handler{
+struct ping_handler {
   int state;
   int fd;
-  int i_req_pnt, i_req_cnt;
-  void* request; /* two different buffer because the request is fixed */
+  int i_req_pnt, i_req_cnt; /* two different buffer because
+                               the request is always the same
+                               once is fixed */
+  void* request;
   void* reply;
 };
 

@@ -717,14 +717,15 @@ int main(int argc, char *argv[])
       long long int bytes_transferred = 0;
       char *fp = NULL;
       int rc, ret;
-      char *sc = NULL, *scdummy = NULL;
-      int len = 0, overflow = 0, headers_len;
+      char *scdummy = NULL;
+      int len = 0, overflow = 0;
 
       goto_loop = 0;
       for(index = 0; index < n_hosts; index++)
         {
           if (hp[index].ph.state == 0 && !hp[index].fatal)
             {
+              hp[index].sc = NULL;
               host = proxyhost ? proxyhost : hp[index].name;
               port = proxyhost ? proxyport : hp[index].portnr;
             persistent_loop:
@@ -917,15 +918,21 @@ int main(int argc, char *argv[])
                 }
             }
 
-          else if (FD_ISSET(hp[index].ph.fd, &rd) && hp[index].ph.state == 2)
+          else if (FD_ISSET(hp[index].ph.fd, &rd) && (hp[index].ph.state == 2 /* || hp[index].ph.state == 3 */))
             {
-              #ifndef NO_SSL
-                 if (hp[index].ssl_h)
-                   rc = ph_read_ssl_HTTP_header(&hp[index].ph, hp[index].ssl_h, &hp[index].header, &hp[index].header_len); //FIXME
-                 else
-              #endif
-                   rc = ph_read_HTTP_header(&hp[index].ph, &hp[index].header, &hp[index].header_len); //FIXME
-              reply = hp[index].header;
+              /* if (hp[index].ph.state == 2) */
+              /*   { */
+                  /* hp[index].header_len = 0; */
+#ifndef NO_SSL
+                  if (hp[index].ssl_h)
+                    rc = ph_read_ssl_HTTP_header(&hp[index].ph, hp[index].ssl_h, &hp[index].header, &hp[index].header_len); //FIXME
+                  else
+#endif
+                    rc = ph_read_HTTP_header(&hp[index].ph, &hp[index].header, &hp[index].header_len); //FIXME
+              /*   } */
+              /* else  */
+              /*   rc = 1; */
+
               if (rc < 0)
                 {
                   if (persistent_connections)
@@ -963,18 +970,16 @@ int main(int argc, char *argv[])
                   continue;
                 }
 
+              //complete read header
               if (hp[index].partial_read == 1)
                 {
                   if (n_partial_read > 0)
                     n_partial_read--;
                   hp[index].partial_read = 0;
                 }
-              
-              hp[index].curncount++;
-              curncount++;
-              wait_read--;
+              reply = hp[index].header;                            
 
-
+              //FIXME: save these value even though another read is required
               if ((show_statuscodes || machine_readable) && reply != NULL)
                 {
                   /* statuscode is in first line behind
@@ -984,15 +989,15 @@ int main(int argc, char *argv[])
 
                   if (dummy)
                     {
-                      sc = strdup(dummy + 1);
+                      hp[index].sc = strdup(dummy + 1);
 
                       /* lines are normally terminated with a
                        * CR/LF
                        */
-                      dummy = strchr(sc, '\r');
+                      dummy = strchr(hp[index].sc, '\r');
                       if (dummy)
                         *dummy = 0x00;
-                      dummy = strchr(sc, '\n');
+                      dummy = strchr(hp[index].sc, '\n');
                       if (dummy)
                         *dummy = 0x00;
                     }
@@ -1005,7 +1010,7 @@ int main(int argc, char *argv[])
                     {
                       char *dummy = strchr(encoding + 1, '\n');
                       if (dummy) *dummy = 0x00;
-                      dummy = strchr(sc, '\r');
+                      dummy = strchr(hp[index].sc, '\r');
                       if (dummy) *dummy = 0x00;
 
                       if (strstr(encoding, "gzip") == 0 || strstr(encoding, "deflate") == 0)
@@ -1030,18 +1035,13 @@ int main(int argc, char *argv[])
                   len = atoi(&length[17]);
                 }
 
-              headers_len = 0;
               if (reply != NULL)
                 {
-                  headers_len = (strstr(reply, "\r\n\r\n") - reply) + 4;              
+                  hp[index].header_len = (strstr(reply, "\r\n\r\n") - reply) + 4;              
                   free(hp[index].header); //bug??? if reply == NULL
                   hp[index].header = NULL;
-                  hp[index].header_len = 0;
                   reply = NULL;
                 }
-
-              hp[index].ok++;
-              hp[index].ph.state = 0;
 
               if (get_instead_of_head && show_Bps)
                 {
@@ -1083,14 +1083,19 @@ int main(int argc, char *argv[])
                       hp[index].ph.state = 0;
                       continue;
                     }
-                  dl_end = get_ts();
 
+                  dl_end = get_ts();
                   Bps = bytes_transferred / max(dl_end - dl_start, 0.000001);
                   hp[index].Bps_min = min(hp[index].Bps_min, Bps);
                   hp[index].Bps_max = max(hp[index].Bps_max, Bps);
                   hp[index].Bps_avg += Bps;
                 }
 
+              hp[index].ok++;
+              hp[index].ph.state = 0;
+              hp[index].curncount++;
+              curncount++;
+              wait_read--;
               hp[index].dend = get_ts();
 
 #ifndef NO_SSL
@@ -1125,13 +1130,13 @@ int main(int argc, char *argv[])
 
               if (machine_readable)
                 {
-                  if (sc)
+                  if (hp[index].sc)
                     {
-                      char *dummy = strchr(sc, ' ');
+                      char *dummy = strchr(hp[index].sc, ' ');
 
                       if (dummy) *dummy = 0x00;
 
-                      if (strstr(ok_str, sc))
+                      if (strstr(ok_str, hp[index].sc))
                         {
                           printf("%f", ms);
                         }
@@ -1141,7 +1146,7 @@ int main(int argc, char *argv[])
                         }
 
                       if (show_statuscodes)
-                        printf(" %s", sc);
+                        printf(" %s", hp[index].sc);
                     }
                   else
                     {
@@ -1160,14 +1165,14 @@ int main(int argc, char *argv[])
                     snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
-                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, headers_len, len, hp[index].curncount);
+                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, hp[index].header_len, len, hp[index].curncount);
                   else
-                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, headers_len, hp[index].curncount);
+                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, hp[index].header_len, hp[index].curncount);
 
                   if (split)
-                    printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp[index].dstart) * 1000.0, (hp[index].dend - dafter_connect) * 1000.0, ms, sc?sc:"");
+                    printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp[index].dstart) * 1000.0, (hp[index].dend - dafter_connect) * 1000.0, ms, hp[index].sc?hp[index].sc:"");
                   else
-                    printf("time=%.2f ms %s", ms, sc?sc:"");
+                    printf("time=%.2f ms %s", ms, hp[index].sc?hp[index].sc:"");
 
                   if (hp[index].persistent_did_reconnect)
                     {
@@ -1199,19 +1204,20 @@ int main(int argc, char *argv[])
                   printf("\n");
                 }
 
-              if (show_statuscodes && ok_str != NULL && sc != NULL)
+              if (show_statuscodes && ok_str != NULL && hp[index].sc != NULL)
                 {
-                  scdummy = strchr(sc, ' ');
+                  scdummy = strchr(hp[index].sc, ' ');
                   if (scdummy) *scdummy = 0x00;
 
-                  if (strstr(ok_str, sc) == NULL)
+                  if (strstr(ok_str, hp[index].sc) == NULL)
                     {
                       hp[index].ok--;
                       hp[index].err++;
                     }
                 }
 
-              free(sc);
+              hp[index].header_len = 0;
+              free(hp[index].sc);
               fflush(NULL);
               if (curncount != count && !stop)
                 hp[index].wait = get_ts() + wait;

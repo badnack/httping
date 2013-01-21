@@ -37,6 +37,9 @@ void ph_free(ping_handler *ph)
       free(ph->request);
 }
 
+//FIXME: follow the same read algorithm?
+// Therefore: pass to the function a buffer which is write into the one of the ping_buffer,
+// then then send it.
 int ph_write(ping_handler* ph)
 {
   int rc;
