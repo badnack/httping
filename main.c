@@ -253,7 +253,7 @@ int main(int argc, char *argv[])
   struct sockaddr_in *bind_to = NULL;
   struct sockaddr_in bind_to_4;
   struct sockaddr_in6 bind_to_6;
-  host_param *hp, *hp_tmp;
+  host_param *hp, *hp_tmp, *hp_nag = NULL;
   ping_buffer* pb;
   char bind_to_valid = 0;
   char split = 0, use_ipv6 = 0;
@@ -263,7 +263,6 @@ int main(int argc, char *argv[])
   int index;
   fd_set rd, wr;
   int type_err;
-  int avg_httping_time;
 
 
   static struct option long_options[] =
@@ -1267,15 +1266,21 @@ int main(int argc, char *argv[])
 
       if(type_err != 0) //there was at least one error
         continue;
-
+      
       if (nagios_mode == 1)
         {
           if (hp_tmp->ok == 0) //connection not valid
             continue;
           else if (hp_tmp->avg_httping_time >= nagios_crit)
+            {
               type_err = 2;
+              hp_nag = hp_tmp;
+            }
           else if (hp_tmp->avg_httping_time >= nagios_warn)
+            {
               type_err = 1;
+              hp_nag = hp_tmp;
+            }
           ok = 1; // one valid connection
         }
       else if (nagios_mode == 2)
@@ -1283,7 +1288,10 @@ int main(int argc, char *argv[])
           if (hp_tmp->ok && last_error[0] == 0x00)
             type_err = 0;
           else
-            type_err = 1;
+            {
+              type_err = 1;
+              hp_nag = hp_tmp;
+            }
         }
       else if(hp[index].ok)
         ok = 1;
@@ -1302,15 +1310,15 @@ int main(int argc, char *argv[])
       switch(type_err)
         {
         case 1:
-          printf("WARNING - average httping-time is %.1f\n", hp[index].avg_httping_time);
+          printf("WARNING - average httping-time is %.1f\n", hp_nag->avg_httping_time);
           free(hp);
           return 1;
         case 2:
-          printf("CRITICAL - average httping-time is %.1f\n", hp[index].avg_httping_time);
+          printf("CRITICAL - average httping-time is %.1f\n", hp_nag->avg_httping_time);
           free(hp);
           return 2;
         default: /* OK */
-          printf("OK - average httping-time is %.1f (%s)|ping=%f\n", hp[index].avg_httping_time, last_error, hp[index].avg_httping_time);
+          printf("OK - average httping-time is %.1f (%s)|ping=%f\n", hp_nag->avg_httping_time, last_error, hp_nag->avg_httping_time);
           break;
         }
     }
@@ -1319,7 +1327,7 @@ int main(int argc, char *argv[])
       switch(type_err)
         {
         case 0:
-          printf("OK - all fine, avg httping time is %.1f|ping=%f\n", hp[index].avg_httping_time, hp[index].avg_httping_time);
+          printf("OK - all fine, avg httping time is %.1f|ping=%f\n", hp_nag->avg_httping_time, hp_nag->avg_httping_time);
           break;
         default:
           printf("%s: - failed: %s", nagios_exit_code == 1?"WARNING":(nagios_exit_code == 2?"CRITICAL":"ERROR"), last_error);
