@@ -1,8 +1,3 @@
-#include <arpa/inet.h>
-#ifndef NO_SSL
-#include <openssl/ssl.h>
-#include "mssl.h"
-#endif
 /* The GPL applies to this program.
    In addition, as a special exception, the copyright holders give
    permission to link the code of portions of this program with the
@@ -18,6 +13,11 @@
    files in the program, then also delete it here.
 */
 
+#include <arpa/inet.h>
+#ifndef NO_SSL
+#include <openssl/ssl.h>
+#include "mssl.h"
+#endif
 #include "handler.h"
 
 typedef struct host_param host_param;
@@ -51,4 +51,5 @@ struct host_param {
   SSL *ssl_h;
 };
 
-int max_fd(host_param *hp, int n);
+void hp_set_start_values(host_param* hp);
+int hp_max_fd(host_param *hp, int n);

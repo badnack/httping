@@ -253,7 +253,8 @@ int main(int argc, char *argv[])
   struct sockaddr_in *bind_to = NULL;
   struct sockaddr_in bind_to_4;
   struct sockaddr_in6 bind_to_6;
-  host_param *hp;
+  host_param *hp, *hp_tmp;
+  ping_buffer* pb;
   char bind_to_valid = 0;
   char split = 0, use_ipv6 = 0;
   char persistent_connections = 0;
@@ -262,6 +263,8 @@ int main(int argc, char *argv[])
   int index;
   fd_set rd, wr;
   int type_err;
+  int avg_httping_time;
+
 
   static struct option long_options[] =
     {
@@ -511,22 +514,20 @@ int main(int argc, char *argv[])
 #endif
 
   /* Multihost hosts */
-  n_hosts = argc - optind;
-  if (!n_hosts)
+  if (!(n_hosts = argc - optind))
     {
       usage();
       error_exit("No hostname/getrequest given\n");
     }
-
   hp = (host_param*) calloc(sizeof(host_param), n_hosts);
 
   while (optind < argc)
     {
       int i = n_hosts - (argc - optind);
-
       char *slash, *colon;
       char *getcopy = argv[optind];
 
+      hp_tmp = &hp[i];
       if (strncasecmp(getcopy, "http://", 7) == 0)
         {
           getcopy += 7;
@@ -534,7 +535,7 @@ int main(int argc, char *argv[])
       else if (strncasecmp(getcopy, "https://", 8) == 0)
         {
           getcopy += 8;
-          hp[i].use_ssl = 1;
+          hp_tmp->use_ssl = 1;
         }
 
       slash = strchr(getcopy, '/');
@@ -547,55 +548,53 @@ int main(int argc, char *argv[])
           if (colon)
             {
               *colon = 0x00;
-              hp[i].portnr = atoi(colon + 1); /* per host port number */
+              hp_tmp->portnr = atoi(colon + 1); /* per host port number */
             }
           else
             {
-              hp[i].portnr = portnr; /* global port number */
+              hp_tmp->portnr = portnr; /* global port number */
             }
         }
-      hp[i].name = strdup(getcopy);
+      hp_tmp->name = strdup(getcopy);
 #ifndef NO_SSL
-      if (hp[i].use_ssl && hp[i].portnr == 80)
-        hp[i].portnr = 443;
+      if (hp_tmp->use_ssl && hp_tmp->portnr == 80)
+        hp_tmp->portnr = 443;
 #endif
       optind++;
     }
 
   last_error[0] = 0x00;
+  FD_ZERO(&rd);
+  FD_ZERO(&wr);
 
   if (!get_instead_of_head && show_Bps)
     error_exit("-b/-B can only be used when also using -G\n");
 
-  if(tfo && use_ssl)            /* FIXME: check hp[index].use_ssl also */
-    error_exit("TCP Fast open and SSL not supported together\n");
-
-  /* init variables */
-  FD_ZERO(&rd);
-  FD_ZERO(&wr);
 
   for(index = 0; index < n_hosts; index++)
     {
-      hp[index].min = 999999999999999.0; //FIXE change in init funcion
-      hp[index].Bps_min = 1 << 30;
-      hp[index].avg_httping_time = -1.0;
-      hp[index].ssl_h = NULL;
-      hp[index].partial_write = 0;
-      hp[index].partial_read = 0;
-      hp[index].header = NULL;
-      hp[index].header_len = 0;
+      hp_tmp = &hp[index];
+      pb = &hp_tmp->ph.pb;
 
-#ifndef NO_SSL
-      if (hp[index].use_ssl || use_ssl)
+      if(tfo && hp_tmp->use_ssl)
         {
-          get = mymalloc(8 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
-          sprintf(get, "https://%s:%d/", hp[index].name, hp[index].portnr);
+          printf("TCP Fast open and SSL not supported together\n");
+          hp_tmp->fatal = 1;
+          continue;
+        }
+      
+      hp_set_start_values(hp_tmp);
+#ifndef NO_SSL
+      if (hp_tmp->use_ssl || use_ssl)
+        {
+          get = mymalloc(8 /* http:// */ + strlen(hp_tmp->name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
+          sprintf(get, "https://%s:%d/", hp_tmp->name, hp_tmp->portnr);
         }
       else
         {
 #endif
-          get = mymalloc(7 /* http:// */ + strlen(hp[index].name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
-          sprintf(get, "http://%s:%d/", hp[index].name, hp[index].portnr);
+          get = mymalloc(7 /* http:// */ + strlen(hp_tmp->name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
+          sprintf(get, "http://%s:%d/", hp_tmp->name, hp_tmp->portnr);
 #ifndef NO_SSL
         }
 #endif
@@ -615,22 +614,22 @@ int main(int argc, char *argv[])
         }
 
 #ifndef NO_SSL
-      if (hp[index].use_ssl || use_ssl)
+      if (hp_tmp->use_ssl || use_ssl)
         {
-          hp[index].client_ctx = initialize_ctx();
-          if (!hp[index].client_ctx)
+          hp_tmp->client_ctx = initialize_ctx();
+          if (!hp_tmp->client_ctx)
             {
               snprintf(last_error, ERROR_BUFFER_SIZE, "problem creating SSL context\n");
-              hp[index].fatal = 1;
+              hp_tmp->fatal = 1;
               continue;
             }
         }
 #endif
 
-      if (ph_init(&hp[index].ph, BUF_SIZE, strlen(get) + 8192) < 0)
+      if (ph_init(&hp_tmp->ph, BUF_SIZE, strlen(get) + 8192) < 0)
         error_exit("\nSystem error\n");
       if (proxyhost)
-        pb_write_request(&hp[index].ph.pb, 1, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
+        pb_write_request(pb, 1, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", get, persistent_connections?'1':'0');
       else
         {
           char *dummy = get, *slash;
@@ -641,24 +640,24 @@ int main(int argc, char *argv[])
 
           slash = strchr(dummy, '/');
           if (slash)
-            pb_write_request(&hp[index].ph.pb, 1, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
+            pb_write_request(pb, 1, "%s %s HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", slash, persistent_connections?'1':'0');
           else
-            pb_write_request(&hp[index].ph.pb, 1, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
+            pb_write_request(pb, 1, "%s / HTTP/1.%c\r\n", get_instead_of_head?"GET":"HEAD", persistent_connections?'1':'0');
         }
       if (useragent)
-        pb_write_request(&hp[index].ph.pb, 1, "User-Agent: %s\r\n", useragent);
+        pb_write_request(pb, 1, "User-Agent: %s\r\n", useragent);
       else
-        pb_write_request(&hp[index].ph.pb, 1, "User-Agent: HTTPing v" VERSION "\r\n");
-      pb_write_request(&hp[index].ph.pb, 1, "Host: %s\r\n", hp[index].name);
+        pb_write_request(pb, 1, "User-Agent: HTTPing v" VERSION "\r\n");
+      pb_write_request(pb, 1, "Host: %s\r\n", hp_tmp->name);
       if (referer)
-        pb_write_request(&hp[index].ph.pb, 1, "Referer: %s\r\n", referer);
+        pb_write_request(pb, 1, "Referer: %s\r\n", referer);
       if (ask_compression)
-        pb_write_request(&hp[index].ph.pb, 1, "Accept-Encoding: gzip,deflate\r\n");
+        pb_write_request(pb, 1, "Accept-Encoding: gzip,deflate\r\n");
 
       if (no_cache)
         {
-          pb_write_request(&hp[index].ph.pb, 1, "Pragma: no-cache\r\n");
-          pb_write_request(&hp[index].ph.pb, 1, "Cache-Control: no-cache\r\n");
+          pb_write_request(pb, 1, "Pragma: no-cache\r\n");
+          pb_write_request(pb, 1, "Cache-Control: no-cache\r\n");
         }
 
       /* Basic Authentification */
@@ -669,21 +668,21 @@ int main(int argc, char *argv[])
           error_exit("Basic Authnetication (-A) can only be used with a username and/or password (-U -P) ");
         sprintf(auth_string,"%s:%s",usr,pwd);
         enc_b64(auth_string, strlen(auth_string), b64_auth_string);
-        pb_write_request(&hp[index].ph.pb, 1, "Authorization: Basic %s\r\n", b64_auth_string);
+        pb_write_request(pb, 1, "Authorization: Basic %s\r\n", b64_auth_string);
       }
 
       /* Cookie Insertion */
       if (cookie) {
-        pb_write_request(&hp[index].ph.pb, 1, "Cookie: %s;\r\n", cookie);
+        pb_write_request(pb, 1, "Cookie: %s;\r\n", cookie);
       }
 
       if (persistent_connections)
-        pb_write_request(&hp[index].ph.pb, 1, "Connection: keep-alive\r\n");
+        pb_write_request(pb, 1, "Connection: keep-alive\r\n");
 
-      pb_write_request(&hp[index].ph.pb, 1, "\r\n");
+      pb_write_request(pb, 1, "\r\n");
 
       if (!quiet && !machine_readable && !nagios_mode )
-        printf("PING %s:%d (%s):\n", hp[index].name, hp[index].portnr, get);
+        printf("PING %s:%d (%s):\n", hp_tmp->name, hp_tmp->portnr, get);
       if (get != NULL)
         {
           free(get);
@@ -718,15 +717,16 @@ int main(int argc, char *argv[])
       goto_loop = 0;
       for(index = 0; index < n_hosts; index++)
         {
-          if (hp[index].ph.state == 0 && !hp[index].fatal)
+          hp_tmp = &hp[index];
+          if (hp_tmp->ph.state == 0 && !hp_tmp->fatal)
             {
-              hp[index].sc = NULL;
-              host = proxyhost ? proxyhost : hp[index].name;
-              port = proxyhost ? proxyport : hp[index].portnr;
+              hp_tmp->sc = NULL;
+              host = proxyhost ? proxyhost : hp_tmp->name;
+              port = proxyhost ? proxyport : hp_tmp->portnr;
             persistent_loop:
-              if (hp[index].ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp[index].have_resolved == 0)))
+              if (hp_tmp->ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp_tmp->have_resolved == 0)))
                 {
-                  memset(&hp[index].addr, 0x00, sizeof(hp[index].addr));
+                  memset(&hp_tmp->addr, 0x00, sizeof(hp_tmp->addr));
 
                   if (ai)
                     {
@@ -736,102 +736,102 @@ int main(int argc, char *argv[])
 
                   if (resolve_host(host, &ai, use_ipv6, port) == -1)
                     {
-                      hp[index].err++;
+                      hp_tmp->err++;
                       emit_error();
-                      hp[index].have_resolved = 1;
+                      hp_tmp->have_resolved = 1;
                       continue;
                     }
                   ai_use = select_resolved_host(ai, use_ipv6);
-                  get_addr(ai_use, &hp[index].addr);
+                  get_addr(ai_use, &hp_tmp->addr);
                 }
 
               req_sent = 0;
 
-              if ((persistent_connections && hp[index].ph.fd < 0) || (!persistent_connections))
+              if ((persistent_connections && hp_tmp->ph.fd < 0) || (!persistent_connections))
                 {
-                  hp[index].dstart = get_ts();
-                 hp[index].ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((_buffer*)(hp[index].ph.pb.request))->buf, ((_buffer*)(hp[index].ph.pb.request))->available, &req_sent); //FIXME
+                  hp_tmp->dstart = get_ts();
+                 hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((_buffer*)(hp_tmp->ph.pb.request))->buf, ((_buffer*)(hp_tmp->ph.pb.request))->available, &req_sent); //FIXME
                 }
-              if (hp[index].ph.fd == -3)
+              if (hp_tmp->ph.fd == -3)
                   continue;
-              if (hp[index].ph.fd < 0)
+              if (hp_tmp->ph.fd < 0)
                 {
                   emit_error();
-                  hp[index].ph.fd = -1;
+                  hp_tmp->ph.fd = -1;
                   continue;
                 }
 
-              if (hp[index].ph.fd >= 0)
+              if (hp_tmp->ph.fd >= 0)
                 {
                   /* set socket to low latency */
-                  if (set_tcp_low_latency(hp[index].ph.fd) == -1)
+                  if (set_tcp_low_latency(hp_tmp->ph.fd) == -1)
                     {
-                      close(hp[index].ph.fd);
-                      hp[index].ph.fd = -1;
+                      close(hp_tmp->ph.fd);
+                      hp_tmp->ph.fd = -1;
                       continue;
                     }
 
                   /* set fd blocking */
-                  if (set_fd_blocking(hp[index].ph.fd) == -1)
+                  if (set_fd_blocking(hp_tmp->ph.fd) == -1)
                     {
-                      close(hp[index].ph.fd);
-                      hp[index].ph.fd = -1;
+                      close(hp_tmp->ph.fd);
+                      hp_tmp->ph.fd = -1;
                       continue;
                     }
 
 #ifndef NO_SSL
-                  if ((hp[index].use_ssl || use_ssl) && hp[index].ssl_h == NULL)
+                  if ((hp_tmp->use_ssl || use_ssl) && hp_tmp->ssl_h == NULL)
                     {
                       BIO *s_bio = NULL;
-                      rc = connect_ssl(hp[index].ph.fd, hp[index].client_ctx, &hp[index].ssl_h, &s_bio, timeout);
+                      rc = connect_ssl(hp_tmp->ph.fd, hp_tmp->client_ctx, &hp_tmp->ssl_h, &s_bio, timeout);
                       if (rc != 0)
                         {
-                          close(hp[index].ph.fd);
-                          hp[index].ph.fd = rc;
+                          close(hp_tmp->ph.fd);
+                          hp_tmp->ph.fd = rc;
 
                           if (persistent_connections)
                             {
-                              if (++hp[index].persistent_tries < 2)
+                              if (++hp_tmp->persistent_tries < 2)
                                 {
-                                  close(hp[index].ph.fd);
-                                  hp[index].ph.fd = -1;
-                                  hp[index].persistent_did_reconnect = 1;
+                                  close(hp_tmp->ph.fd);
+                                  hp_tmp->ph.fd = -1;
+                                  hp_tmp->persistent_did_reconnect = 1;
                                   goto persistent_loop;
                                 }
                             }
                         }
                     }
 #endif
-                  hp[index].ph.state = (req_sent) ? 2 : 1;
+                  hp_tmp->ph.state = (req_sent) ? 2 : 1;
                 }
 
               if (split)
                 dafter_connect = get_ts();
 
 
-              if (hp[index].ph.fd < 0)
+              if (hp_tmp->ph.fd < 0)
                 {
-                  if (hp[index].ph.fd == -2)
+                  if (hp_tmp->ph.fd == -2)
                     snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
                   emit_error();
-                  hp[index].ph.state = 0;
-                  hp[index].ph.fd = -1;
+                  hp_tmp->ph.state = 0;
+                  hp_tmp->ph.fd = -1;
                   continue;
                 }
             }//end state == 0
 
           //states
-          if (hp[index].ph.state == 0)//request connection again
+          if (hp_tmp->ph.state == 0)//request connection again
             {
-              FD_CLR(hp[index].ph.fd, &rd);
-              FD_CLR(hp[index].ph.fd, &wr);
+              FD_CLR(hp_tmp->ph.fd, &rd);
+              FD_CLR(hp_tmp->ph.fd, &wr);
             }
-          else if (hp[index].ph.state == 1)//ready to write request
-            FD_SET(hp[index].ph.fd, &wr);
-          else if (hp[index].ph.state == 2)//ready to read Header
-            FD_SET(hp[index].ph.fd, &rd);
-          else if (hp[index].ph.state == 3)//ready to read Body
-            FD_SET(hp[index].ph.fd, &rd);
+          else if (hp_tmp->ph.state == 1)//ready to write request
+            FD_SET(hp_tmp->ph.fd, &wr);
+          else if (hp_tmp->ph.state == 2)//ready to read Header
+            FD_SET(hp_tmp->ph.fd, &rd);
+          else if (hp_tmp->ph.state == 3)//ready to read Body
+            FD_SET(hp_tmp->ph.fd, &rd);
 
           if (goto_loop)
             {
@@ -839,7 +839,7 @@ int main(int argc, char *argv[])
               break;
             }
         }//end for
-      if ((ret = select(max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
+      if ((ret = select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
           if (ret == 0)
             error_exit("\nNo more hosts available\n");
@@ -847,20 +847,21 @@ int main(int argc, char *argv[])
         }
       for (index = 0; index < n_hosts; index++)
         {
-          if (FD_ISSET(hp[index].ph.fd, &wr) && hp[index].ph.state == 1)
+          hp_tmp = &hp[index];
+          if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
-              if (get_ts() < hp[index].wait)
+              if (get_ts() < hp_tmp->wait)
                 continue;
 #ifndef NO_SSL
-              if (hp[index].use_ssl || use_ssl)
-                rc = ph_send_ssl(hp[index].ssl_h, &hp[index].ph);
+              if (hp_tmp->use_ssl || use_ssl)
+                rc = ph_send_ssl(hp_tmp->ssl_h, &hp_tmp->ph);
               else
 #endif
                 {
                   if (!req_sent)
                     {
-                      hp[index].dstart = get_ts();
-                      rc = ph_send(&hp[index].ph);
+                      hp_tmp->dstart = get_ts();
+                      rc = ph_send(&hp_tmp->ph);
                     }
                   else
                     rc = 1;
@@ -870,66 +871,66 @@ int main(int argc, char *argv[])
                 {
                   if (persistent_connections)
                     {
-                      if (++hp[index].persistent_tries < 2)
+                      if (++hp_tmp->persistent_tries < 2)
                         {
-                          close(hp[index].ph.fd);
-                          hp[index].persistent_did_reconnect = 1;
-                          hp[index].ph.fd = -1;
-                          hp[index].ph.state = 0;
+                          close(hp_tmp->ph.fd);
+                          hp_tmp->persistent_did_reconnect = 1;
+                          hp_tmp->ph.fd = -1;
+                          hp_tmp->ph.state = 0;
                           goto_loop = 1;
                           goto persistent_loop;
                         }
                     }
                   emit_error();
-                  close(hp[index].ph.fd);
-                  hp[index].ph.fd = -1;
-                  hp[index].ph.state = 0;
-                  hp[index].err++;
+                  close(hp_tmp->ph.fd);
+                  hp_tmp->ph.fd = -1;
+                  hp_tmp->ph.state = 0;
+                  hp_tmp->err++;
                   continue;
                 }
               else if (rc == 0) //rc == 0: write not yet completed
                 {
-                  if (hp[index].partial_write == 0)
+                  if (hp_tmp->partial_write == 0)
                     {
                       n_partial_write++;
-                      hp[index].partial_write = 1;
+                      hp_tmp->partial_write = 1;
                     }
                   continue;
                 }
 
               //write completed
               wait_read++;
-              hp[index].ph.state = 2;
+              hp_tmp->ph.state = 2;
 
-              if (hp[index].partial_write == 1)
+              if (hp_tmp->partial_write == 1)
                 {
                   if (n_partial_write > 0)
                     n_partial_write--;
-                  hp[index].partial_write = 0;
+                  hp_tmp->partial_write = 0;
                 }
             }
 
-          else if (FD_ISSET(hp[index].ph.fd, &rd) && (hp[index].ph.state == 2 || hp[index].ph.state == 3))
+          else if (FD_ISSET(hp_tmp->ph.fd, &rd) && (hp_tmp->ph.state == 2 || hp_tmp->ph.state == 3))
             {
-              if (hp[index].ph.state == 2)
+              if (hp_tmp->ph.state == 2)
                 {
 #ifndef NO_SSL
-                  if (hp[index].ssl_h)
-                    rc = ph_recv_ssl_HTTP_header(&hp[index].ph, hp[index].ssl_h, &hp[index].header, &hp[index].header_len, &overflow); //FIXME
+                  if (hp_tmp->ssl_h)
+                    rc = ph_recv_ssl_HTTP_header(&hp_tmp->ph, hp_tmp->ssl_h, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
                   else
 #endif
-                    rc = ph_recv_HTTP_header(&hp[index].ph, &hp[index].header, &hp[index].header_len, &overflow); //FIXME
+                    rc = ph_recv_HTTP_header(&hp_tmp->ph, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
 
                   if (rc < 0)
                     {
                       if (persistent_connections)
                         {
-                          if (++hp[index].persistent_tries < 2)
+                          if (++hp_tmp->persistent_tries < 2)
                             {
-                              close(hp[index].ph.fd);
-                              hp[index].ph.state = 0;
-                              hp[index].ph.fd = -1;
-                              hp[index].persistent_did_reconnect = 1;
+                              close(hp_tmp->ph.fd);
+                              hp_tmp->ph.state = 0;
+                              hp_tmp->ph.fd = -1;
+                              hp_tmp->persistent_did_reconnect = 1;
                               goto_loop = 1;
                               goto persistent_loop;
                             }
@@ -940,31 +941,31 @@ int main(int argc, char *argv[])
 
                       emit_error();
 
-                      close(hp[index].ph.fd);
-                      hp[index].ph.fd = -1;
-                      hp[index].ph.state = 0;
-                      hp[index].err++;
+                      close(hp_tmp->ph.fd);
+                      hp_tmp->ph.fd = -1;
+                      hp_tmp->ph.state = 0;
+                      hp_tmp->err++;
                       continue;
                     }
 
                   if (rc == 0) // partial read performed
                     {
-                      if (hp[index].partial_read == 0)
+                      if (hp_tmp->partial_read == 0)
                         {
                           n_partial_read++;
-                          hp[index].partial_read = 1;
+                          hp_tmp->partial_read = 1;
                         }
                       continue;
                     }
 
                   //complete read header
-                  if (hp[index].partial_read == 1)
+                  if (hp_tmp->partial_read == 1)
                     {
                       if (n_partial_read > 0)
                         n_partial_read--;
-                      hp[index].partial_read = 0;
+                      hp_tmp->partial_read = 0;
                     }
-                  reply = hp[index].header;
+                  reply = hp_tmp->header;
 
                   if ((show_statuscodes || machine_readable) && reply != NULL)
                     {
@@ -975,15 +976,15 @@ int main(int argc, char *argv[])
 
                       if (dummy)
                         {
-                          hp[index].sc = strdup(dummy + 1);
+                          hp_tmp->sc = strdup(dummy + 1);
 
                           /* lines are normally terminated with a
                            * CR/LF
                            */
-                          dummy = strchr(hp[index].sc, '\r');
+                          dummy = strchr(hp_tmp->sc, '\r');
                           if (dummy)
                             *dummy = 0x00;
-                          dummy = strchr(hp[index].sc, '\n');
+                          dummy = strchr(hp_tmp->sc, '\n');
                           if (dummy)
                             *dummy = 0x00;
                         }
@@ -996,7 +997,7 @@ int main(int argc, char *argv[])
                         {
                           char *dummy = strchr(encoding + 1, '\n');
                           if (dummy) *dummy = 0x00;
-                          dummy = strchr(hp[index].sc, '\r');
+                          dummy = strchr(hp_tmp->sc, '\r');
                           if (dummy) *dummy = 0x00;
 
                           if (strstr(encoding, "gzip") == 0 || strstr(encoding, "deflate") == 0)
@@ -1013,9 +1014,9 @@ int main(int argc, char *argv[])
                         {
                           snprintf(last_error, ERROR_BUFFER_SIZE, "'Content-Length'-header missing!\n");
                           emit_error();
-                          close(hp[index].ph.fd);
-                          hp[index].ph.fd = -1;
-                          hp[index].ph.state = 0;
+                          close(hp_tmp->ph.fd);
+                          hp_tmp->ph.fd = -1;
+                          hp_tmp->ph.state = 0;
                           continue;
                         }
                       len = atoi(&length[17]);
@@ -1023,110 +1024,110 @@ int main(int argc, char *argv[])
 
                   if (reply != NULL)
                     {
-                      hp[index].header_len = (strstr(reply, "\r\n\r\n") - reply) + 4;
-                      free(hp[index].header);
-                      hp[index].header = NULL;
+                      hp_tmp->header_len = (strstr(reply, "\r\n\r\n") - reply) + 4;
+                      free(hp_tmp->header);
+                      hp_tmp->header = NULL;
                       reply = NULL;
                     }
 
-                  hp[index].dl_start = get_ts(); //Just before the state 3
-                  hp[index].bytes_transferred = 0;
+                  hp_tmp->dl_start = get_ts(); //Just before the state 3
+                  hp_tmp->bytes_transferred = 0;
                   if (persistent_connections)
                     {
-                      if (hp[index].cur_limit == -1 || len < hp[index].cur_limit)
-                        hp[index].cur_limit = len - overflow;
+                      if (hp_tmp->cur_limit == -1 || len < hp_tmp->cur_limit)
+                        hp_tmp->cur_limit = len - overflow;
                     }
                   if (get_instead_of_head && show_Bps)
-                    hp[index].ph.state = 3;
+                    hp_tmp->ph.state = 3;
                   else
-                    hp[index].ph.state = 4;
+                    hp_tmp->ph.state = 4;
 
                 } // end state == 2
 
-              else if (hp[index].ph.state == 3)
+              else if (hp_tmp->ph.state == 3)
                 {
                   /* state 3 */
                   if (get_instead_of_head && show_Bps)
                     {
-                      hp[index].cur_limit = Bps_limit;
+                      hp_tmp->cur_limit = Bps_limit;
 
-                      rc = ph_recv_and_clean(&hp[index].ph);
+                      rc = ph_recv_and_clean(&hp_tmp->ph);
 
                       if (rc < 0)
-                        hp[index].fatal = 1;
+                        hp_tmp->fatal = 1;
                       else if (rc > 0)
                         {
-                          hp[index].bytes_transferred += rc;
-                          if (hp[index].cur_limit == -1 || (hp[index].cur_limit != -1 && hp[index].bytes_transferred < hp[index].cur_limit))
+                          hp_tmp->bytes_transferred += rc;
+                          if (hp_tmp->cur_limit == -1 || (hp_tmp->cur_limit != -1 && hp_tmp->bytes_transferred < hp_tmp->cur_limit))
                             continue;
                         }
 
-                      if(hp[index].fatal)
+                      if(hp_tmp->fatal)
                         {
-                          close(hp[index].ph.fd);
-                          hp[index].ph.fd = -1;
-                          hp[index].ph.state = 0;
+                          close(hp_tmp->ph.fd);
+                          hp_tmp->ph.fd = -1;
+                          hp_tmp->ph.state = 0;
                           continue;
                         }
 
-                      hp[index].dl_end = get_ts();
-                      hp[index].Bps = hp[index].bytes_transferred / max(hp[index].dl_end - hp[index].dl_start, 0.000001);
-                      hp[index].Bps_min = min(hp[index].Bps_min, hp[index].Bps);
-                      hp[index].Bps_max = max(hp[index].Bps_max, hp[index].Bps);
-                      hp[index].Bps_avg += hp[index].Bps;
+                      hp_tmp->dl_end = get_ts();
+                      hp_tmp->Bps = hp_tmp->bytes_transferred / max(hp_tmp->dl_end - hp_tmp->dl_start, 0.000001);
+                      hp_tmp->Bps_min = min(hp_tmp->Bps_min, hp_tmp->Bps);
+                      hp_tmp->Bps_max = max(hp_tmp->Bps_max, hp_tmp->Bps);
+                      hp_tmp->Bps_avg += hp_tmp->Bps;
                     }
-                  hp[index].ph.state = 4;
+                  hp_tmp->ph.state = 4;
                 } // end state 3
             }//end read state
 
           /* show result */
-          if (hp[index].ph.state == 4)
+          if (hp_tmp->ph.state == 4)
             {
-              hp[index].dend = get_ts();
-              hp[index].ok++;
-              hp[index].ph.state = 0;
-              hp[index].curncount++;
+              hp_tmp->dend = get_ts();
+              hp_tmp->ok++;
+              hp_tmp->ph.state = 0;
+              hp_tmp->curncount++;
               curncount++;
               wait_read--;
 #ifndef NO_SSL
-              if ((hp[index].use_ssl || use_ssl) && !persistent_connections)
+              if ((hp_tmp->use_ssl || use_ssl) && !persistent_connections)
                 {
-                  if (show_fp && hp[index].ssl_h != NULL)
+                  if (show_fp && hp_tmp->ssl_h != NULL)
                     {
-                      fp = get_fingerprint(hp[index].ssl_h);
+                      fp = get_fingerprint(hp_tmp->ssl_h);
                     }
 
-                  if (close_ssl_connection(hp[index].ssl_h, hp[index].ph.fd) == -1)
+                  if (close_ssl_connection(hp_tmp->ssl_h, hp_tmp->ph.fd) == -1)
                     {
                       snprintf(last_error, ERROR_BUFFER_SIZE, "error shutting down ssl\n");
                       emit_error();
                     }
 
-                  SSL_free(hp[index].ssl_h);
-                  hp[index].ssl_h = NULL;
+                  SSL_free(hp_tmp->ssl_h);
+                  hp_tmp->ssl_h = NULL;
                 }
 #endif
 
               if (!persistent_connections)
                 {
-                  close(hp[index].ph.fd);
-                  hp[index].ph.fd = -1;
+                  close(hp_tmp->ph.fd);
+                  hp_tmp->ph.fd = -1;
                 }
 
-              ms = (hp[index].dend - hp[index].dstart) * 1000.0;
-              hp[index].avg += ms;
-              hp[index].min = hp[index].min > ms ? ms : hp[index].min;
-              hp[index].max = hp[index].max < ms ? ms : hp[index].max;
+              ms = (hp_tmp->dend - hp_tmp->dstart) * 1000.0;
+              hp_tmp->avg += ms;
+              hp_tmp->min = hp_tmp->min > ms ? ms : hp_tmp->min;
+              hp_tmp->max = hp_tmp->max < ms ? ms : hp_tmp->max;
 
               if (machine_readable)
                 {
-                  if (hp[index].sc)
+                  if (hp_tmp->sc)
                     {
-                      char *dummy = strchr(hp[index].sc, ' ');
+                      char *dummy = strchr(hp_tmp->sc, ' ');
 
                       if (dummy) *dummy = 0x00;
 
-                      if (strstr(ok_str, hp[index].sc))
+                      if (strstr(ok_str, hp_tmp->sc))
                         {
                           printf("%f", ms);
                         }
@@ -1136,7 +1137,7 @@ int main(int argc, char *argv[])
                         }
 
                       if (show_statuscodes)
-                        printf(" %s", hp[index].sc);
+                        printf(" %s", hp_tmp->sc);
                     }
                   else
                     {
@@ -1151,30 +1152,30 @@ int main(int argc, char *argv[])
                   char current_host[1024];
                   char *operation = !persistent_connections ? "connected to" : "pinged host";
 
-                  if (getnameinfo((const struct sockaddr *)&hp[index].addr, sizeof(hp[index].addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) != 0)
+                  if (getnameinfo((const struct sockaddr *)&hp_tmp->addr, sizeof(hp_tmp->addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) != 0)
                     snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
-                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, hp[index].header_len, len, hp[index].curncount);
+                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp_tmp->portnr, hp_tmp->name, hp_tmp->header_len, len, hp_tmp->curncount);
                   else
-                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, hp[index].portnr, hp[index].name, hp[index].header_len, hp[index].curncount);
+                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, hp_tmp->portnr, hp_tmp->name, hp_tmp->header_len, hp_tmp->curncount);
 
                   if (split)
-                    printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp[index].dstart) * 1000.0, (hp[index].dend - dafter_connect) * 1000.0, ms, hp[index].sc?hp[index].sc:"");
+                    printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp_tmp->dstart) * 1000.0, (hp_tmp->dend - dafter_connect) * 1000.0, ms, hp_tmp->sc?hp_tmp->sc:"");
                   else
-                    printf("time=%.2f ms %s", ms, hp[index].sc?hp[index].sc:"");
+                    printf("time=%.2f ms %s", ms, hp_tmp->sc?hp_tmp->sc:"");
 
-                  if (hp[index].persistent_did_reconnect)
+                  if (hp_tmp->persistent_did_reconnect)
                     {
                       printf(" C");
-                      hp[index].persistent_did_reconnect = 0;
+                      hp_tmp->persistent_did_reconnect = 0;
                     }
 
                   if (show_Bps)
                     {
-                      printf(" %dKB/s", hp[index].Bps / 1024);
+                      printf(" %dKB/s", hp_tmp->Bps / 1024);
                       if (show_bytes_xfer)
-                        printf(" %dKB", (int)(hp[index].bytes_transferred / 1024));
+                        printf(" %dKB", (int)(hp_tmp->bytes_transferred / 1024));
                       if (ask_compression)
                         {
                           printf(" (");
@@ -1184,7 +1185,7 @@ int main(int argc, char *argv[])
                         }
                     }
 
-                  if ((hp[index].use_ssl || use_ssl) && show_fp && fp != NULL)
+                  if ((hp_tmp->use_ssl || use_ssl) && show_fp && fp != NULL)
                     {
                       printf(" %s", fp);
                       free(fp);
@@ -1194,23 +1195,23 @@ int main(int argc, char *argv[])
                   printf("\n");
                 }
 
-              if (show_statuscodes && ok_str != NULL && hp[index].sc != NULL)
+              if (show_statuscodes && ok_str != NULL && hp_tmp->sc != NULL)
                 {
-                  scdummy = strchr(hp[index].sc, ' ');
+                  scdummy = strchr(hp_tmp->sc, ' ');
                   if (scdummy) *scdummy = 0x00;
 
-                  if (strstr(ok_str, hp[index].sc) == NULL)
+                  if (strstr(ok_str, hp_tmp->sc) == NULL)
                     {
-                      hp[index].ok--;
-                      hp[index].err++;
+                      hp_tmp->ok--;
+                      hp_tmp->err++;
                     }
                 }
 
-              hp[index].header_len = 0;
-              free(hp[index].sc);
+              hp_tmp->header_len = 0;
+              free(hp_tmp->sc);
               fflush(NULL);
               if (curncount != count && !stop)
-                hp[index].wait = get_ts() + wait;
+                hp_tmp->wait = get_ts() + wait;
             }// end state 4
         }// for select
 
@@ -1221,32 +1222,32 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
-      if (hp[index].ok){
-        hp[index].avg_httping_time = hp[index].avg / (double)hp[index].ok;
+      if (hp_tmp->ok){
+        hp_tmp->avg_httping_time = hp_tmp->avg / (double)hp_tmp->ok;
         ok++;
       }
       else
-        hp[index].avg_httping_time = -1.0;
+        hp_tmp->avg_httping_time = -1.0;
 
       double total_took = get_ts() - started_at;
       if (!quiet && !machine_readable && !nagios_mode)
         {
-          printf("--- %s ping statistics ---\n", hp[index].name);
+          printf("--- %s ping statistics ---\n", hp_tmp->name);
 
-          if (hp[index].curncount == 0 && hp[index].err > 0)
+          if (hp_tmp->curncount == 0 && hp_tmp->err > 0)
             fprintf(stderr, "internal error! (curncount)\n");
 
           if (count == -1)
-            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp[index].curncount, hp[index].ok, (((double)hp[index].err) / ((double)hp[index].curncount)) * 100.0, total_took * 1000.0);
+            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp_tmp->curncount, hp_tmp->ok, (((double)hp_tmp->err) / ((double)hp_tmp->curncount)) * 100.0, total_took * 1000.0);
           else
-            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp[index].curncount, hp[index].ok, (((double)hp[index].err) / ((double)count)) * 100.0, total_took * 1000.0); //FIXME: count
+            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp_tmp->curncount, hp_tmp->ok, (((double)hp_tmp->err) / ((double)count)) * 100.0, total_took * 1000.0); //FIXME: count
 
-          if (hp[index].ok > 0)
+          if (hp_tmp->ok > 0)
             {
-              printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp[index].min, hp[index].avg_httping_time, hp[index].max);
+              printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp_tmp->min, hp_tmp->avg_httping_time, hp_tmp->max);
 
               if (show_Bps)
-                printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", hp[index].Bps_min / 1024, (int)(hp[index].Bps_avg / hp[index].ok) / 1024, hp[index].Bps_max / 1024);
+                printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", hp_tmp->Bps_min / 1024, (int)(hp_tmp->Bps_avg / hp_tmp->ok) / 1024, hp_tmp->Bps_max / 1024);
             }
         }
     }
@@ -1258,27 +1259,28 @@ int main(int argc, char *argv[])
 
   for(index = 0; index < n_hosts; index++)
     {
-      ph_free(&hp[index].ph);
-      free(hp[index].name);
-      if (hp[index].header != NULL)
-        free(hp[index].header);
+      hp_tmp = &hp[index];
+      ph_free(&hp_tmp->ph);
+      free(hp_tmp->name);
+      if (hp_tmp->header != NULL)
+        free(hp_tmp->header);
 
       if(type_err != 0) //there was at least one error
         continue;
 
       if (nagios_mode == 1)
         {
-          if (hp[index].ok == 0) //connection not valid
+          if (hp_tmp->ok == 0) //connection not valid
             continue;
-          else if (hp[index].avg_httping_time >= nagios_crit)
+          else if (hp_tmp->avg_httping_time >= nagios_crit)
               type_err = 2;
-          else if (hp[index].avg_httping_time >= nagios_warn)
+          else if (hp_tmp->avg_httping_time >= nagios_warn)
               type_err = 1;
           ok = 1; // one valid connection
         }
       else if (nagios_mode == 2)
         {
-          if (hp[index].ok && last_error[0] == 0x00)
+          if (hp_tmp->ok && last_error[0] == 0x00)
             type_err = 0;
           else
             type_err = 1;
@@ -1287,13 +1289,13 @@ int main(int argc, char *argv[])
         ok = 1;
     }
 
-  free(hp);
 
   if (nagios_mode == 1)
     {
       if (!ok)
         {
           printf("CRITICAL - all connections have failed: %s", last_error);
+          free(hp);
           return 2;
         }
 
@@ -1301,9 +1303,11 @@ int main(int argc, char *argv[])
         {
         case 1:
           printf("WARNING - average httping-time is %.1f\n", hp[index].avg_httping_time);
+          free(hp);
           return 1;
         case 2:
           printf("CRITICAL - average httping-time is %.1f\n", hp[index].avg_httping_time);
+          free(hp);
           return 2;
         default: /* OK */
           printf("OK - average httping-time is %.1f (%s)|ping=%f\n", hp[index].avg_httping_time, last_error, hp[index].avg_httping_time);
@@ -1319,10 +1323,12 @@ int main(int argc, char *argv[])
           break;
         default:
           printf("%s: - failed: %s", nagios_exit_code == 1?"WARNING":(nagios_exit_code == 2?"CRITICAL":"ERROR"), last_error);
+          free(hp);
           return nagios_exit_code;
         }
     }
 
+  free(hp);
   if (ok)
     return 0;
   else
