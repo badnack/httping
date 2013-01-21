@@ -96,9 +96,10 @@ int ph_write_ssl(SSL* ssl_h, ping_handler* ph)
   return rc;
 }
 
-int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len/* , int* overflow */)
+int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow)
 {
   int rc, ret;
+  char* term;
 
   rc = pb_socket_recv(ph->reply, ph->fd);
   if (rc == 0 || rc == -1)	/* socket closed before request was read? */
@@ -106,22 +107,21 @@ int ph_read_HTTP_header(ping_handler* ph, char** header, int* h_len/* , int* ove
 
   ret = pb_read(ph->reply, header, *h_len);
   *h_len += ret;
-  if (strstr(*header, "\r\n\r\n") != NULL)
-    return 1;
+  if ((term = strstr(*header, "\r\n\r\n")) != NULL)
+    {
+      *overflow = *h_len - (term - *header + 4);
+      return 1;
+    }
 
-
-  /* char *term = strstr(buffer, "\r\n\r\n"); */
-  /* if (term) */
-  /*  *overflow = len_in - (term - buffer + 4); */
-  /* else */
-  /*  *overflow = 0; */
+  *overflow = 0;
 
   return 0;
 }
 
-int ph_read_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len/* , int* overflow */)
+int ph_read_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow)
 {
   int rc, ret;
+  char* term;
 
   rc = pb_ssl_recv(ph->reply, ssl_h);
   if (rc == 0 || rc == -1)	/* socket closed before request was read? */
@@ -129,15 +129,13 @@ int ph_read_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_
 
   ret = pb_read(ph->reply, header, *h_len);
   *h_len += ret;
-  if (strstr(*header, "\r\n\r\n") != NULL)
-    return 1;
+  if ((term = strstr(*header, "\r\n\r\n")) != NULL)
+    {
+      *overflow = *h_len - (term - *header + 4);
+      return 1;
+    }
 
-
-  /* char *term = strstr(buffer, "\r\n\r\n"); */
-  /* if (term) */
-  /*  *overflow = len_in - (term - buffer + 4); */
-  /* else */
-  /*  *overflow = 0; */
+  *overflow = 0;
 
   return 0;
 }
