@@ -84,7 +84,8 @@ int pb_read(ping_buffer* pb, char** buffer, int buf_start) //set dim to read? FI
       to_read = (pb->pnt >= pb->available) ? pb->size - pb->pnt : pb->available - pb->pnt;
       to_read = (pb->size) ? pb->cnt : to_read;
       memmove(*buffer + buf_start, pb->buf + r_pnt, to_read);
-      r_pnt = (r_pnt + to_read) % pb->size;
+      pb->pnt = (pb->pnt + to_read) % pb->size;
+      r_pnt = pb->pnt;
       buf_start += to_read;
       pb->cnt -= to_read;
       tot += to_read;
