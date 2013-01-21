@@ -39,8 +39,10 @@ int ph_send(ping_handler* ph) //FIXME: return length written
     snprintf(last_error, ERROR_BUFFER_SIZE, "ph_send::write failed: %s\n", strerror(errno));
   else if (rc == -2)
     snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
+  else if (rc > 0 && ph->pb.request->pnt == 0) //the whole request has been sent
+    return 1;
 
-  return rc;
+  return 0;
 }
 
 int ph_send_ssl(SSL* ssl_h, ping_handler* ph)
@@ -56,8 +58,9 @@ int ph_send_ssl(SSL* ssl_h, ping_handler* ph)
     snprintf(last_error, ERROR_BUFFER_SIZE, "ph_send_ssl::write failed: %s\n", strerror(errno));
   else if (rc == -2)
     snprintf(last_error, ERROR_BUFFER_SIZE, "connection prematurely closed by peer\n");
-
-  return rc;
+  else if (rc > 0 && ph->pb.request->pnt == 0) //the whole request has been sent
+    return 1;
+  return 0;
 }
 
 int ph_recv_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow)
@@ -143,7 +146,7 @@ int ph_recv_and_clean(ping_handler* ph)
   int rc;
 
   rc = ph_recv_HTTP_body(ph, &dummy);
-  if (/* rc > 0 &&  */dummy != NULL) //in order to empty the ping_buffer
+  if (dummy != NULL) //in order to empty the ping_buffer
     free(dummy);
   return rc;
 }

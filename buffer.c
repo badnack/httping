@@ -123,10 +123,8 @@ int pb_socket_send_request(ping_buffer* pb, int sd)
     return -2;
 
   req->pnt = (req->pnt + rc) % req->cnt;
-  if (rc > 0 && req->pnt == 0)
-    return 1;
 
-  return 0;
+  return rc;
 }
 
 int pb_ssl_send_request(ping_buffer* pb, SSL* ssl_h)
@@ -147,10 +145,8 @@ int pb_ssl_send_request(ping_buffer* pb, SSL* ssl_h)
     return -2;
 
   req->pnt = (req->pnt + rc) % req->cnt;
-  if (rc > 0 && req->pnt == 0)
-    return 1;
 
-  return 0;
+  return rc;
 }
 
 int pb_socket_recv_reply(ping_buffer* pb, int sd)
