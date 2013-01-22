@@ -5,6 +5,37 @@
 #include <string.h>
 #include <unistd.h>
 
+static int pb_read(_buffer* _buf, char* buffer, int n)
+{
+  int r_pnt, buf_pnt, ret;
+  int to_read, tot_to_read;
+
+  if (buffer == NULL || _buf == NULL)
+    return -1;
+  if (_buf->cnt == 0)
+    return 0;
+
+  r_pnt = _buf->pnt;
+  buf_pnt = 0;
+  tot_to_read = (_buf->cnt > n) ? n : _buf->cnt;
+  ret = tot_to_read;
+
+  while (tot_to_read > 0)
+    {
+      to_read = (_buf->pnt >= _buf->available) ? _buf->size - _buf->pnt : _buf->available - _buf->pnt;
+      to_read = (tot_to_read > to_read) ? to_read : tot_to_read;
+      memmove(buffer + buf_pnt, _buf->buf + r_pnt, to_read); //according man it should never fails
+      _buf->pnt = (_buf->pnt + to_read) % _buf->size;
+      r_pnt = _buf->pnt;
+      buf_pnt += to_read;
+      _buf->cnt -= to_read;
+      tot_to_read -= to_read;
+    }
+
+  return ret;
+}
+
+
 int pb_init(ping_buffer* pb, int req_size, int rep_size)
 {
 
@@ -76,33 +107,16 @@ int pb_write_request(ping_buffer* pb, int mode, char* fmt, ...)
 
 int pb_read_reply(ping_buffer* pb, char* buffer, int n)
 {
-  int r_pnt, buf_pnt, ret;
-  int to_read, tot_to_read;
-  _buffer* rep;
-
-  if (pb == NULL || (rep = pb->reply) == NULL)
+  if (pb == NULL || buffer == NULL)
     return -1;
-  if (rep->cnt == 0)
-    return 0;
+  return pb_read(pb->reply, buffer, n);
+}
 
-  r_pnt = rep->pnt;
-  buf_pnt = 0;
-  tot_to_read = (rep->cnt > n) ? n : rep->cnt;
-  ret = tot_to_read;
-
-  while (tot_to_read > 0)
-    {
-      to_read = (rep->pnt >= rep->available) ? rep->size - rep->pnt : rep->available - rep->pnt;
-      to_read = (tot_to_read > to_read) ? to_read : tot_to_read;
-      memmove(buffer + buf_pnt, rep->buf + r_pnt, to_read); //according man it should never fails
-      rep->pnt = (rep->pnt + to_read) % rep->size;
-      r_pnt = rep->pnt;
-      buf_pnt += to_read;
-      rep->cnt -= to_read;
-      tot_to_read -= to_read;
-    }
-
-  return ret;
+int pb_read_request(ping_buffer* pb, char* buffer, int n)
+{
+  if (pb == NULL || buffer == NULL)
+    return -1;
+  return pb_read(pb->request, buffer, n);
 }
 
 int pb_socket_send_request(ping_buffer* pb, int sd)

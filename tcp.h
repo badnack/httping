@@ -13,5 +13,12 @@
   files in the program, then also delete it here.
 */
 
-int connect_to(struct sockaddr *bind_to, struct addrinfo *ai, int timeout, int tfo, char *msg, int msg_len, int *msg_accepted);
+#ifndef TCP_INCLUDE
+#define TCP_INCLUDE
+
+#include "buffer.h"
+
+int connect_to(struct sockaddr *bind_to, struct addrinfo *ai, int timeout, int tfo, ping_buffer* pb, int *msg_accepted);
 int set_tcp_low_latency(int sock);
+
+#endif

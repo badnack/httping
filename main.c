@@ -755,7 +755,7 @@ int main(int argc, char *argv[])
               if ((persistent_connections && hp_tmp->ph.fd < 0) || (!persistent_connections))
                 {
                   hp_tmp->dstart = get_ts();
-                 hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, ((_buffer*)(hp_tmp->ph.pb.request))->buf, ((_buffer*)(hp_tmp->ph.pb.request))->available, &req_sent); //FIXME
+                  hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, &hp_tmp->ph.pb, &req_sent); //FIXME
                 }
               if (hp_tmp->ph.fd == -3)
                   continue;

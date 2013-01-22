@@ -12,6 +12,10 @@
    version.  If you delete this exception statement from all source
    files in the program, then also delete it here.
 */
+
+#ifndef BUFFER_INCLUDE
+#define BUFFER_INCLUDE
+
 #include <openssl/ssl.h>
 
 /** Maximum forma size */
@@ -92,6 +96,16 @@ int pb_write_request(ping_buffer* pb, int mode, char* fmt, ...);
 int pb_read_reply(ping_buffer* pb, char* buffer, int n);
 
 /**
+   Retrieves n bytes from the request buffer.
+   
+   @param pb Ping buffer structure
+   @param buffer A buffer to store the request bytes
+   @param n Amount of bytes to get
+   @return number of read bytes, or @c -1 if an error occurred
+*/
+int pb_read_request(ping_buffer* pb, char* buffer, int n);
+
+/**
    Send the request buffer content (or a part of it) over a socket.
 
    @param pb Ping buffer structure
@@ -142,3 +156,5 @@ int pb_get_cnt_reply(ping_buffer* pb);
    @return amount of request bytes, or @c -1 if an error occurred
 */
 int pb_get_cnt_request(ping_buffer* pb);
+
+#endif

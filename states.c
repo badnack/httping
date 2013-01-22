@@ -56,9 +56,11 @@ inline int state_write(host_param* hp_tmp, int req_sent, int persistent_connecti
 
 inline int state_read_header(host_param* hp_tmp, int persistent_connections, int show_statuscodes, int machine_readable, int ask_compression, char* is_compressed, int show_bytes_xfer)
 {
-  int overflow = 0;
+  int overflow;
   int rc, len;
   char* reply;
+
+  len = overflow = 0;
 
 #ifndef NO_SSL
   if (hp_tmp->ssl_h)
