@@ -108,6 +108,8 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
 
       if (dummy)
         {
+          if (hp_tmp->sc != NULL)
+            free(hp_tmp->sc);
           hp_tmp->sc = strdup(dummy + 1);
 
           /* lines are normally terminated with a
@@ -125,7 +127,7 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
   if (ask_compression && reply != NULL)
     {
       char *encoding = strstr(reply, "\nContent-Encoding:");
-      if (encoding)
+      if (encoding && hp_tmp->sc != NULL)
         {
           char *dummy = strchr(encoding + 1, '\n');
           if (dummy) *dummy = 0x00;
