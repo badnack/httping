@@ -9,8 +9,6 @@ void hp_set_start_values(host_param* hp)
   hp->Bps_min = 1 << 30;
   hp->avg_httping_time = -1.0;
   hp->ssl_h = NULL;
-  hp->partial_write = 0;
-  hp->partial_read = 0;
   hp->header = NULL;
   hp->header_len = 0;
 

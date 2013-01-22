@@ -10,7 +10,7 @@
 extern void emit_error();
 extern char* last_error;
 
-inline int state_write(host_param* hp_tmp, int req_sent, int persistent_connections, int* n_partial_write, int use_ssl)
+inline int state_write(host_param* hp_tmp, int req_sent, int persistent_connections, int use_ssl)
 {
   int rc;
 
@@ -49,27 +49,12 @@ inline int state_write(host_param* hp_tmp, int req_sent, int persistent_connecti
       return N_PERS_FAIL;
     }
   else if (rc == 0) //rc == 0: write not yet completed
-    {
-      if (hp_tmp->partial_write == 0)
-        {
-          *n_partial_write++;
-          hp_tmp->partial_write = 1;
-        }
-      return PART_WRITE;
-    }
-
-  //write completed
-  if (hp_tmp->partial_write == 1)
-    {
-      if (*n_partial_write > 0)
-        *n_partial_write--;
-      hp_tmp->partial_write = 0;
-    }
+    return PART_WRITE;
 
   return REQUEST_SENT;
 }
 
-inline int state_read_header(host_param* hp_tmp, int persistent_connections, int* n_partial_read, int show_statuscodes, int machine_readable, int ask_compression, char* is_compressed, int show_bytes_xfer)
+inline int state_read_header(host_param* hp_tmp, int persistent_connections, int show_statuscodes, int machine_readable, int ask_compression, char* is_compressed, int show_bytes_xfer)
 {
   int overflow = 0;
   int rc, len;
@@ -109,22 +94,9 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
     }
 
   if (rc == 0) // partial read performed
-    {
-      if (hp_tmp->partial_read == 0)
-        {
-          *n_partial_read++;
-          hp_tmp->partial_read = 1;
-        }
-      return PART_READ;
-    }
+    return PART_READ;
+  
 
-  //complete read header
-  if (hp_tmp->partial_read == 1)
-    {
-      if (*n_partial_read > 0)
-        *n_partial_read--;
-      hp_tmp->partial_read = 0;
-    }
   reply = hp_tmp->header;
 
   if ((show_statuscodes || machine_readable) && reply != NULL)

@@ -217,7 +217,7 @@ int enc_b64(char *source, size_t source_lenght, char *target)
 
 int main(int argc, char *argv[])
 {
-  int n_hosts = 0, wait_read = 0, n_partial_write = 0, n_partial_read = 0;
+  int n_hosts = 0;
   int goto_loop;
   char *proxy = NULL, *proxyhost = NULL;
   int proxyport = 8080;
@@ -698,9 +698,10 @@ int main(int argc, char *argv[])
   double started_at = get_ts();
   struct timeval to;
   int wake_up;
-  
+
   to.tv_sec = wait + 5;
   to.tv_usec = 0;
+  wake_up = 0;
 
   while((curncount < count || count == -1) && stop == 0)
     {
@@ -724,6 +725,7 @@ int main(int argc, char *argv[])
           if (hp_tmp->ph.state == 0 && !hp_tmp->fatal && hp_tmp->wait <= time)
             {
               hp_tmp->sc = NULL;
+              wake_up++;
               host = proxyhost ? proxyhost : hp_tmp->name;
               port = proxyhost ? proxyport : hp_tmp->portnr;
             persistent_loop:
@@ -842,11 +844,21 @@ int main(int argc, char *argv[])
               break;
             }
         }//end for
+
+      /* to prevent CPU high usage */
+      if (!wake_up && curncount != count && !stop)
+        {
+          usleep((useconds_t)(wait * 1000000.0));
+          continue; // in order to avoid select fail
+        }
+      
       if ((ret = select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
+          if (stop)
+            break;
           if (ret == 0)
             error_exit("\nNo more hosts available\n");
-          error_exit("\nSystem error (select)\n"); //BUG: ctrl+c sometimes bring here!
+          error_exit("\nSystem error (select)\n");
         }
       for (index = 0; index < n_hosts; index++)
         {
@@ -855,7 +867,7 @@ int main(int argc, char *argv[])
           /* state 1*/
           if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
-              rc = state_write(hp_tmp, req_sent, persistent_connections, &n_partial_write, use_ssl);
+              rc = state_write(hp_tmp, req_sent, persistent_connections, use_ssl);
               if (rc == PERS_FAIL) //try again
                 {
                   goto_loop = 1;
@@ -864,10 +876,7 @@ int main(int argc, char *argv[])
               if (rc == N_PERS_FAIL)
                 continue;
               if (rc == REQUEST_SENT)
-                {
-                  wait_read++;
-                  hp_tmp->ph.state = 2;
-                }
+                hp_tmp->ph.state = 2;
             }
 
           else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 2)
@@ -875,7 +884,7 @@ int main(int argc, char *argv[])
               /* state 2: Header read */
               if (hp_tmp->ph.state == 2)
                 {
-                  rc = state_read_header(hp_tmp, persistent_connections, &n_partial_read, show_statuscodes, machine_readable, ask_compression, &is_compressed, show_bytes_xfer);
+                  rc = state_read_header(hp_tmp, persistent_connections, show_statuscodes, machine_readable, ask_compression, &is_compressed, show_bytes_xfer);
                   if (rc == PERS_FAIL)
                     {
                       goto_loop = 1;
@@ -894,21 +903,20 @@ int main(int argc, char *argv[])
             {
               /* state 3: body read */
               rc = state_read_body(hp_tmp, Bps_limit);
-
               if (rc == RECV_FAIL || rc == PART_READ)
-                  continue;              
+                  continue;
               hp_tmp->ph.state = 4;
             }
-          
+
           /* state 4: show results */
           if (hp_tmp->ph.state == 4)
             {
               hp_tmp->dend = get_ts();
+              wake_up--;
               hp_tmp->ok++;
               hp_tmp->ph.state = 0;
               hp_tmp->curncount++;
               curncount++;
-              wait_read--;
 #ifndef NO_SSL
               if ((hp_tmp->use_ssl || use_ssl) && !persistent_connections)
                 {
@@ -1026,7 +1034,6 @@ int main(int argc, char *argv[])
                       hp_tmp->err++;
                     }
                 }
-
               hp_tmp->header_len = 0;
               free(hp_tmp->sc);
               fflush(NULL);
@@ -1034,10 +1041,6 @@ int main(int argc, char *argv[])
                 hp_tmp->wait = get_ts() + wait;
             }// end state 4
         }// for select
-
-      if (!wait_read && !n_partial_write && !n_partial_read && curncount != count && !stop)
-        usleep((useconds_t)(wait * 1000000.0));
-
     }// for while
 
   for(index = 0; index < n_hosts; index++)
@@ -1066,13 +1069,13 @@ int main(int argc, char *argv[])
           if (hp_tmp->ok > 0)
             {
               printf("round-trip min/avg/max = %.1f/%.1f/%.1f ms\n", hp_tmp->min, hp_tmp->avg_httping_time, hp_tmp->max);
-              
+
               if (show_Bps)
                 printf("Transfer speed: min/avg/max = %d/%d/%d KB\n", hp_tmp->Bps_min / 1024, (int)(hp_tmp->Bps_avg / hp_tmp->ok) / 1024, hp_tmp->Bps_max / 1024);
             }
         }
     }
-  
+
   ok = 0;
   type_err = 0;
   freeaddrinfo(ai);
