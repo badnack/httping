@@ -812,8 +812,6 @@ int main(int argc, char *argv[])
 
               if (split)
                 dafter_connect = get_ts();
-
-
               if (hp_tmp->ph.fd < 0)
                 {
                   if (hp_tmp->ph.fd == -2)

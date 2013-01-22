@@ -126,14 +126,14 @@ int ph_recv_HTTP_body(ping_handler* ph, char** buffer)
 
   if (ph == NULL)
     return -1;
-
   rc = pb_socket_recv_reply(&ph->pb, ph->fd);
+
   if (rc == -1)	/* socket closed before request was read? */
     return -1;
 
-  if (buffer != NULL)
+  if (buffer != NULL && (cnt = pb_get_cnt_reply(&ph->pb)) > 0)
     {
-      *buffer = (char*)realloc(*buffer, (cnt = pb_get_cnt_reply(&ph->pb)));
+      *buffer = (char*)realloc(*buffer, cnt);
       cnt = pb_read_reply(&ph->pb, *buffer, cnt);
     }
 

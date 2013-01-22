@@ -163,7 +163,7 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
     }
 
   hp_tmp->dl_start = get_ts(); //Just before the state 3
-  hp_tmp->bytes_transferred = overflow;
+  hp_tmp->bytes_transferred = 0;
 
   if (persistent_connections)
     {
@@ -177,6 +177,7 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
 inline int state_read_body(host_param* hp_tmp, int Bps_limit)
 {
   int rc;
+  static int recv = 0;
 
   hp_tmp->cur_limit = Bps_limit;
   rc = ph_recv_and_clean(&hp_tmp->ph);
@@ -190,15 +191,18 @@ inline int state_read_body(host_param* hp_tmp, int Bps_limit)
     }
   else if (rc > 0)
     {
-      hp_tmp->bytes_transferred += rc;
+      recv += rc;
       if (hp_tmp->cur_limit == -1 || (hp_tmp->cur_limit != -1 && hp_tmp->bytes_transferred < hp_tmp->cur_limit))
         return PART_READ;
     }
+
+  hp_tmp->bytes_transferred = recv;
   hp_tmp->dl_end = get_ts();
   hp_tmp->Bps = hp_tmp->bytes_transferred / max(hp_tmp->dl_end - hp_tmp->dl_start, 0.000001);
   hp_tmp->Bps_min = min(hp_tmp->Bps_min, hp_tmp->Bps);
   hp_tmp->Bps_max = max(hp_tmp->Bps_max, hp_tmp->Bps);
   hp_tmp->Bps_avg += hp_tmp->Bps;
+  recv = 0;
 
   return BODY_RECV;
 }
