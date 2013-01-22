@@ -114,7 +114,7 @@ int pb_socket_send_request(ping_buffer* pb, int sd)
   if (pb == NULL || (req = pb->request) == NULL || !req->cnt)
     return -1;
 
-  to_snd = ((req->cnt - req->pnt) > MAX_SEND) ? MAX_SEND : (req->cnt - req->pnt);
+  to_snd = req->cnt - req->pnt;
   rc = write(sd, (char*)req->buf + req->pnt, to_snd);
 
   if (rc == -1)
@@ -136,7 +136,7 @@ int pb_ssl_send_request(ping_buffer* pb, SSL* ssl_h)
   if (pb == NULL || (req = pb->request) == NULL || !req->cnt)
     return -1;
 
-  to_snd = ((req->cnt - req->pnt) > MAX_SEND) ? MAX_SEND : (req->cnt - req->pnt);
+  to_snd = req->cnt - req->pnt;
   rc = SSL_write(ssl_h, (char*)req->buf + req->pnt, to_snd);
 
   if (rc == -1)
@@ -149,7 +149,7 @@ int pb_ssl_send_request(ping_buffer* pb, SSL* ssl_h)
   return rc;
 }
 
-int pb_socket_recv_reply(ping_buffer* pb, int sd)
+inline int pb_socket_recv_reply(ping_buffer* pb, int sd)
 {
   int rc, old_pnt;
   int to_recv;
@@ -160,11 +160,9 @@ int pb_socket_recv_reply(ping_buffer* pb, int sd)
   if (rep->cnt == rep->size) /* read required */
     return -2;
 
+
   to_recv = (rep->available >= rep->pnt) ? rep->size - rep->available : rep->pnt - rep->available;
-  to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
-
   old_pnt = rep->pnt;
-
   if ((rc = read(sd, (char*)rep->buf + rep->available, to_recv)) < 0)
     {
       rep->pnt = old_pnt; //see man 2 read
@@ -172,7 +170,7 @@ int pb_socket_recv_reply(ping_buffer* pb, int sd)
     }
 
   rep->available = (rep->available + rc) % rep->size;
-  rep->cnt += rc;
+  rep->cnt = rep->cnt + rc ;
 
   return rc;
 }
@@ -189,18 +187,15 @@ int pb_ssl_recv_reply(ping_buffer* pb, SSL* ssl_h)
     return -2;
 
   to_recv = (rep->available >= rep->pnt) ? rep->size - rep->available : rep->pnt - rep->available;
-  to_recv = (to_recv > MAX_RECV) ? MAX_RECV : to_recv;
 
   old_pnt = rep->pnt;
-
   if ((rc = SSL_read(ssl_h, (char*)rep->buf + rep->available, to_recv)) < 0)
     {
       rep->pnt = old_pnt; //see man 2 read
       return -1;
     }
-
   rep->available = (rep->available + rc) % rep->size;
-  rep->cnt += rc;
+  rep->cnt = rep->cnt + rc ;
 
   return rc;
 }

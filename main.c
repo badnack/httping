@@ -564,8 +564,6 @@ int main(int argc, char *argv[])
     }
 
   last_error[0] = 0x00;
-  FD_ZERO(&rd);
-  FD_ZERO(&wr);
 
   if (!get_instead_of_head && show_Bps)
     error_exit("-b/-B can only be used when also using -G\n");
@@ -699,7 +697,8 @@ int main(int argc, char *argv[])
   struct addrinfo *ai = NULL, *ai_use;
   double started_at = get_ts();
   struct timeval to;
-
+  int wake_up;
+  
   to.tv_sec = wait + 5;
   to.tv_usec = 0;
 
@@ -712,12 +711,17 @@ int main(int argc, char *argv[])
       int rc, ret;
       char *scdummy = NULL;
       int len = 0;
+      double time;
 
       goto_loop = 0;
+      FD_ZERO(&rd);
+      FD_ZERO(&wr);
+      time = get_ts();
+
       for(index = 0; index < n_hosts; index++)
         {
           hp_tmp = &hp[index];
-          if (hp_tmp->ph.state == 0 && !hp_tmp->fatal)
+          if (hp_tmp->ph.state == 0 && !hp_tmp->fatal && hp_tmp->wait <= time)
             {
               hp_tmp->sc = NULL;
               host = proxyhost ? proxyhost : hp_tmp->name;
@@ -851,9 +855,6 @@ int main(int argc, char *argv[])
           /* state 1*/
           if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
-              if (get_ts() < hp_tmp->wait)
-                continue;
-
               rc = state_write(hp_tmp, req_sent, persistent_connections, &n_partial_write, use_ssl);
               if (rc == PERS_FAIL) //try again
                 {
