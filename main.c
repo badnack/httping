@@ -755,7 +755,7 @@ int main(int argc, char *argv[])
               if ((persistent_connections && hp_tmp->ph.fd < 0) || (!persistent_connections))
                 {
                   hp_tmp->dstart = get_ts();
-                  hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, &hp_tmp->ph.pb, &req_sent); //FIXME
+                  hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, &hp_tmp->ph.pb, &req_sent);
                 }
               if (hp_tmp->ph.fd == -3)
                   continue;
@@ -849,7 +849,7 @@ int main(int argc, char *argv[])
           usleep((useconds_t)(wait * 1000000.0));
           continue; // in order to avoid select fail
         }
-      
+
       if ((ret = select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
           if (stop)
@@ -1062,7 +1062,7 @@ int main(int argc, char *argv[])
           if (count == -1)
             printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp_tmp->curncount, hp_tmp->ok, (((double)hp_tmp->err) / ((double)hp_tmp->curncount)) * 100.0, total_took * 1000.0);
           else
-            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp_tmp->curncount, hp_tmp->ok, (((double)hp_tmp->err) / ((double)count)) * 100.0, total_took * 1000.0); //FIXME: count
+            printf("%d connects, %d ok, %3.2f%% failed, time %.0fms\n", hp_tmp->curncount, hp_tmp->ok, (((double)hp_tmp->err) / ((double)(count/n_hosts))) * 100.0, total_took * 1000.0);
 
           if (hp_tmp->ok > 0)
             {
