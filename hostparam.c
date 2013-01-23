@@ -11,7 +11,7 @@ void hp_set_start_values(host_param* hp)
   hp->ssl_h = NULL;
   hp->header = NULL;
   hp->header_len = 0;
-
+  hp->rep_len = 0;
 }
 
 int hp_max_fd(host_param *hp, int n)

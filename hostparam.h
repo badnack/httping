@@ -45,7 +45,7 @@ struct host_param {
   int fatal;
   int persistent_tries;
   char* header;
-  int header_len;
+  int header_len, rep_len;
   long long int bytes_transferred;
 #ifndef NO_SSL
   SSL_CTX *client_ctx;

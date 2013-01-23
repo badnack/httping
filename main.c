@@ -706,14 +706,10 @@ int main(int argc, char *argv[])
 
   while((curncount < count || count == -1) && stop == 0)
     {
-      double ms;
       double dafter_connect = 0.0;
-      char is_compressed = 0;
-      char *fp = NULL;
       int rc, ret;
-      char *scdummy = NULL;
-      int len = 0;
       double time;
+      char is_compressed = 0;
 
       goto_loop = 0;
       FD_ZERO(&rd);
@@ -774,11 +770,12 @@ int main(int argc, char *argv[])
             error_exit("\nNo more hosts available\n");
           error_exit("\nSystem error (select)\n");
         }
+
       for (index = 0; index < n_hosts; index++)
         {
           hp_tmp = &hp[index];
 
-          /* state 1*/
+          /* state 1: send request*/
           if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
               rc = state_write(hp_tmp, req_sent, persistent_connections);
@@ -793,9 +790,9 @@ int main(int argc, char *argv[])
                 hp_tmp->ph.state = 2;
             }
 
+          /* state 2: Header read */
           else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 2)
             {
-              /* state 2: Header read */
               if (hp_tmp->ph.state == 2)
                 {
                   rc = state_read_header(hp_tmp, persistent_connections, show_statuscodes, machine_readable, ask_compression, &is_compressed, show_bytes_xfer);
@@ -813,9 +810,10 @@ int main(int argc, char *argv[])
                     hp_tmp->ph.state = 4;
                 }
             }
+
+          /* state 3: body read */
           else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 3)
             {
-              /* state 3: body read */
               rc = state_read_body(hp_tmp, Bps_limit);
               if (rc == RECV_FAIL || rc == PART_READ)
                   continue;
@@ -825,137 +823,16 @@ int main(int argc, char *argv[])
           /* state 4: show results */
           if (hp_tmp->ph.state == 4)
             {
-              hp_tmp->dend = get_ts();
               wake_up--;
-              hp_tmp->ok++;
-              hp_tmp->ph.state = 0;
-              hp_tmp->curncount++;
               curncount++;
-#ifndef NO_SSL
-              if (hp_tmp->use_ssl && !persistent_connections)
-                {
-                  if (show_fp && hp_tmp->ssl_h != NULL)
-                    {
-                      fp = get_fingerprint(hp_tmp->ssl_h);
-                    }
-
-                  if (close_ssl_connection(hp_tmp->ssl_h, hp_tmp->ph.fd) == -1)
-                    {
-                      snprintf(last_error, ERROR_BUFFER_SIZE, "error shutting down ssl\n");
-                      emit_error();
-                    }
-
-                  SSL_free(hp_tmp->ssl_h);
-                  hp_tmp->ssl_h = NULL;
-                }
-#endif
-
-              if (!persistent_connections)
-                {
-                  close(hp_tmp->ph.fd);
-                  hp_tmp->ph.fd = -1;
-                }
-
-              ms = (hp_tmp->dend - hp_tmp->dstart) * 1000.0;
-              hp_tmp->avg += ms;
-              hp_tmp->min = hp_tmp->min > ms ? ms : hp_tmp->min;
-              hp_tmp->max = hp_tmp->max < ms ? ms : hp_tmp->max;
-
-              if (machine_readable)
-                {
-                  if (hp_tmp->sc)
-                    {
-                      char *dummy = strchr(hp_tmp->sc, ' ');
-
-                      if (dummy) *dummy = 0x00;
-
-                      if (strstr(ok_str, hp_tmp->sc))
-                        {
-                          printf("%f", ms);
-                        }
-                      else
-                        {
-                          printf("%s", err_str);
-                        }
-
-                      if (show_statuscodes)
-                        printf(" %s", hp_tmp->sc);
-                    }
-                  else
-                    {
-                      printf("%s", err_str);
-                    }
-                  if(audible)
-                    putchar('\a');
-                  printf("\n");
-                }
-              else if (!quiet && !nagios_mode)
-                {
-                  char current_host[1024];
-                  char *operation = !persistent_connections ? "connected to" : "pinged host";
-
-                  if (getnameinfo((const struct sockaddr *)&hp_tmp->addr, sizeof(hp_tmp->addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) != 0)
-                    snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
-
-                  if (persistent_connections && show_bytes_xfer)
-                    printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp_tmp->portnr, hp_tmp->name, hp_tmp->header_len, len, hp_tmp->curncount);
-                  else
-                    printf("%s %s:%d (%s) (%d bytes), seq=%d ", operation, current_host, hp_tmp->portnr, hp_tmp->name, hp_tmp->header_len, hp_tmp->curncount);
-
-                  if (split)
-                    printf("time=%.2f+%.2f=%.2f ms %s", (dafter_connect - hp_tmp->dstart) * 1000.0, (hp_tmp->dend - dafter_connect) * 1000.0, ms, hp_tmp->sc?hp_tmp->sc:"");
-                  else
-                    printf("time=%.2f ms %s", ms, hp_tmp->sc?hp_tmp->sc:"");
-
-                  if (hp_tmp->persistent_did_reconnect)
-                    {
-                      printf(" C");
-                      hp_tmp->persistent_did_reconnect = 0;
-                    }
-
-                  if (show_Bps)
-                    {
-                      printf(" %dKB/s", hp_tmp->Bps / 1024);
-                      if (show_bytes_xfer)
-                        printf(" %dKB", (int)(hp_tmp->bytes_transferred / 1024));
-                      if (ask_compression)
-                        {
-                          printf(" (");
-                          if (!is_compressed)
-                            printf("not ");
-                          printf("compressed)");
-                        }
-                    }
-
-                  if (hp_tmp->use_ssl && show_fp && fp != NULL)
-                    {
-                      printf(" %s", fp);
-                      free(fp);
-                    }
-                  if(audible)
-                    putchar('\a');
-                  printf("\n");
-                }
-
-              if (show_statuscodes && ok_str != NULL && hp_tmp->sc != NULL)
-                {
-                  scdummy = strchr(hp_tmp->sc, ' ');
-                  if (scdummy) *scdummy = 0x00;
-
-                  if (strstr(ok_str, hp_tmp->sc) == NULL)
-                    {
-                      hp_tmp->ok--;
-                      hp_tmp->err++;
-                    }
-                }
-              hp_tmp->header_len = 0;
+              state_show_results(hp_tmp, persistent_connections, show_fp, machine_readable, ok_str, show_statuscodes, audible, quiet, nagios_mode, show_Bps, show_bytes_xfer, ask_compression, is_compressed, err_str, split, dafter_connect);
               free(hp_tmp->sc);
               fflush(NULL);
               if (curncount != count && !stop)
                 hp_tmp->wait = get_ts() + wait;
-            }// end state 4
+            }
         }// for select
-    }// for while
+    }// while
 
   for(index = 0; index < n_hosts; index++)
     {
