@@ -34,7 +34,6 @@ int ph_send(ping_handler* ph) //FIXME: return length written
     return -1;
 
   rc = pb_socket_send_request(&ph->pb, ph->fd);
-
   if (rc == -1)
     snprintf(last_error, ERROR_BUFFER_SIZE, "ph_send::write failed: %s\n", strerror(errno));
   else if (rc == -2)
@@ -140,7 +139,7 @@ int ph_recv_HTTP_body(ping_handler* ph, char** buffer)
   return cnt;
 }
 
-int ph_recv_and_clean(ping_handler* ph)
+int ph_get_and_clean(ping_handler* ph)
 {
   char* dummy = NULL;
   int rc;

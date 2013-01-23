@@ -260,6 +260,7 @@ int main(int argc, char *argv[])
   char no_cache = 0;
   int tfo = 0;
   int index;
+  int body_no_len;
   fd_set rd, wr;
   int type_err;
   char* fp;
@@ -707,8 +708,9 @@ int main(int argc, char *argv[])
   struct addrinfo* ai_use;
   double started_at = get_ts();
   struct timeval to;
+  int bl_index, bl_found;
 
-  to.tv_sec = wait + 5;
+  to.tv_sec = wait;
   to.tv_usec = 0;
   alive = 0;
 
@@ -816,7 +818,6 @@ int main(int argc, char *argv[])
                         }
                     }
 #endif
-                  hp_tmp->ph.state = (req_sent) ? 2 : 1;
                 }
 
               if (hp_tmp->ph.fd < 0)
@@ -824,13 +825,13 @@ int main(int argc, char *argv[])
                   if (hp_tmp->ph.fd == -2)
                     snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
                   emit_error();
-                  hp_tmp->ph.state = 0;
                   hp_tmp->ph.fd = -1;
                   continue;
                 }
 
               if (split)
                 dafter_connect = get_ts();
+              hp_tmp->ph.state = (req_sent) ? 2 : 1;            
             }
 
           //states
@@ -840,12 +841,12 @@ int main(int argc, char *argv[])
               FD_CLR(hp_tmp->ph.fd, &wr);
             }
           else if (hp_tmp->ph.state == 1)//ready to write request
-            FD_SET(hp_tmp->ph.fd, &wr);
+            FD_SET(hp_tmp->ph.fd, &wr);              
           else if (hp_tmp->ph.state == 2)//ready to read Header
             FD_SET(hp_tmp->ph.fd, &rd);
           else if (hp_tmp->ph.state == 3)//ready to read Body
             FD_SET(hp_tmp->ph.fd, &rd);
-
+          
           if (goto_loop)
             {
               goto_loop = 0;
@@ -862,11 +863,30 @@ int main(int argc, char *argv[])
 
       if ((ret = select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
+          to.tv_sec = wait;
           if (stop)
             break;
           if (ret == 0)
-            error_exit("\nNo more hosts available\n");
-          error_exit("\nSystem error (select)\n");
+            {
+              bl_index = bl_found = 0;
+              for (;bl_index < n_hosts; bl_index++)
+                {
+                  body_no_len = 0;
+                for_body_no_len:
+                  if (hp[bl_index].ph.state == 3)
+                    {
+                      body_no_len = 1;
+                      hp_tmp = &hp[bl_index];
+                      goto body_no_len;
+                    }
+                }
+
+              if (!bl_found)
+                error_exit("\nNo more hosts available\n");
+              continue;
+            }
+          else
+            error_exit("\nSystem error (select)\n");
         }
 
       for (index = 0; index < n_hosts; index++)
@@ -927,7 +947,6 @@ int main(int argc, char *argv[])
                     rc = ph_recv_ssl_HTTP_header(&hp_tmp->ph, hp_tmp->ssl_h, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
                   else
 #endif
-                    //CHECK
                     rc = ph_recv_HTTP_header(&hp_tmp->ph, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
 
                   if (rc < 0)
@@ -1026,10 +1045,11 @@ int main(int argc, char *argv[])
 
                   hp_tmp->dl_start = get_ts(); //Just before the state 3
                   hp_tmp->bytes_transferred = 0;
+                  hp_tmp->cur_limit = Bps_limit;
 
                   if (persistent_connections)
                     {
-                      if (hp_tmp->cur_limit == -1 || hp_tmp->rep_len < hp_tmp->cur_limit)
+                      if (hp_tmp->rep_len > 0 && (hp_tmp->cur_limit == -1 || hp_tmp->rep_len < hp_tmp->cur_limit))
                         hp_tmp->cur_limit = hp_tmp->rep_len - overflow;
                     }
 
@@ -1039,15 +1059,17 @@ int main(int argc, char *argv[])
                       hp_tmp->bytes_transferred = 0;
                     }
                   else
-                    hp_tmp->ph.state = 4;
+                    {
+                      hp_tmp->dend = get_ts();
+                      hp_tmp->ph.state = 4;
+                    }
                 }
             }
 
           /* state 3: body read */
           else if (FD_ISSET(hp_tmp->ph.fd, &rd) && hp_tmp->ph.state == 3)
             {
-              hp_tmp->cur_limit = Bps_limit;
-              rc = ph_recv_and_clean(&hp_tmp->ph);
+              rc = ph_get_and_clean(&hp_tmp->ph);
 
               if (rc < 0)
                 {
@@ -1059,11 +1081,14 @@ int main(int argc, char *argv[])
               else if (rc > 0)
                 {
                   hp_tmp->bytes_transferred += rc;
+                  hp_tmp->dl_end = get_ts();
                   if (hp_tmp->cur_limit == -1 || (hp_tmp->cur_limit != -1 && hp_tmp->bytes_transferred < hp_tmp->cur_limit))
                     continue;
                 }
 
-              hp_tmp->dl_end = get_ts();
+              /* rc == 0 */
+              hp_tmp->dend = get_ts();
+            body_no_len:
               hp_tmp->Bps = hp_tmp->bytes_transferred / max(hp_tmp->dl_end - hp_tmp->dl_start, 0.000001);
               hp_tmp->Bps_min = min(hp_tmp->Bps_min, hp_tmp->Bps);
               hp_tmp->Bps_max = max(hp_tmp->Bps_max, hp_tmp->Bps);
@@ -1077,7 +1102,6 @@ int main(int argc, char *argv[])
               alive--;
               curncount++;
               fp = scdummy = NULL;
-              hp_tmp->dend = get_ts();
               hp_tmp->ok++;
               hp_tmp->ph.state = 0;
               hp_tmp->curncount++;
@@ -1205,6 +1229,11 @@ int main(int argc, char *argv[])
               fflush(NULL);
               if (curncount != count && !stop)
                 hp_tmp->wait = get_ts() + wait;
+              if (body_no_len)
+                {
+                  bl_found = 1;
+                  goto for_body_no_len;
+                }
             }
         }// for select
     }// while

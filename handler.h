@@ -34,7 +34,7 @@ int ph_send(ping_handler* ph);
 int ph_send_ssl(SSL* ssl_h, ping_handler* ph);
 int ph_recv_HTTP_header(ping_handler* ph, char** header, int* h_len, int* overflow);
 int ph_recv_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_len, int* overflow);
-int ph_recv_HTTP(ping_handler* ph);
-int ph_recv_and_clean(ping_handler* ph);
+int ph_recv_HTTP_body(ping_handler* ph, char** buffer);
+int ph_get_and_clean(ping_handler* ph);
 
 #endif
