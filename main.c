@@ -731,10 +731,10 @@ int main(int argc, char *argv[])
             {
               hp_tmp->sc = NULL;
               alive++;
-            persistent_loop:            
-
               host = proxyhost ? proxyhost : hp_tmp->name;
               port = proxyhost ? proxyport : hp_tmp->portnr;
+
+            persistent_loop:
 
               if (hp_tmp->ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp_tmp->have_resolved == 0)))
                 {
@@ -828,7 +828,7 @@ int main(int argc, char *argv[])
                   hp_tmp->ph.fd = -1;
                   continue;
                 }
-              
+
               if (split)
                 dafter_connect = get_ts();
             }
