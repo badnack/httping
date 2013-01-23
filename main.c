@@ -708,7 +708,7 @@ int main(int argc, char *argv[])
   struct addrinfo* ai_use;
   double started_at = get_ts();
   struct timeval to;
-  int bl_index;
+  int bl_index, bl_found;
 
   to.tv_sec = wait + 1;
   to.tv_usec = 0;
@@ -868,20 +868,21 @@ int main(int argc, char *argv[])
             break;
           if (ret == 0)
             {
-              bl_index  = 0;
+              bl_index = bl_found = 0;
               for (;bl_index < n_hosts; bl_index++)
                 {
                   body_no_len = 0;
                 for_body_no_len:
                   if (hp[bl_index].ph.state == 3)
                     {
+                      bl_found = 1;
                       body_no_len = 1;
                       hp_tmp = &hp[bl_index];
                       goto body_no_len;
                     }
                 }
-              
-              printf("No request/response, try again\n");
+              if (!bl_found)
+                printf("No request/response, try again\n");
               continue;
             }
           else
