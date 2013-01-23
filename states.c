@@ -5,17 +5,125 @@
 #include "handler.h"
 #include "hostparam.h"
 #include "gen.h"
+#include "res.h"
+#include "tcp.h"
+#include "io.h"
 
 
 extern void emit_error();
 extern char* last_error;
 
-inline int state_write(host_param* hp_tmp, int req_sent, int persistent_connections, int use_ssl)
+inline int state_init(host_param* hp_tmp, int resolve_once, struct addrinfo *ai, struct sockaddr_in* bind_to, char* proxyhost, int proxyport, char use_ipv6, int* req_sent, int persistent_connections, int timeout, int tfo)
+{
+  int port, rc;
+  char* host;
+  struct addrinfo* ai_use;
+
+  host = proxyhost ? proxyhost : hp_tmp->name;
+  port = proxyhost ? proxyport : hp_tmp->portnr;
+
+  if (hp_tmp->ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp_tmp->have_resolved == 0)))
+    {
+      memset(&hp_tmp->addr, 0x00, sizeof(hp_tmp->addr));
+
+      if (ai)
+        {
+          freeaddrinfo(ai);
+          ai = NULL;
+        }
+
+      if (resolve_host(host, &ai, use_ipv6, port) == -1)
+        {
+          hp_tmp->err++;
+          emit_error();
+          hp_tmp->have_resolved = 1;
+          return NOT_RESOLVED;
+        }
+      ai_use = select_resolved_host(ai, use_ipv6);
+      get_addr(ai_use, &hp_tmp->addr);
+    }
+
+  *req_sent = 0;
+
+  if ((persistent_connections && hp_tmp->ph.fd < 0) || (!persistent_connections))
+    {
+      hp_tmp->dstart = get_ts();
+      hp_tmp->ph.fd = connect_to((struct sockaddr *)bind_to, ai, timeout, tfo, &hp_tmp->ph.pb, req_sent);
+    }
+
+  if (hp_tmp->ph.fd == -3)
+    return SOCKET_ERROR;
+
+  if (hp_tmp->ph.fd < 0)
+    {
+      emit_error();
+      hp_tmp->ph.fd = -1;
+      return SOCKET_ERROR;
+    }
+
+  if (hp_tmp->ph.fd >= 0)
+    {
+      /* set socket to low latency */
+      if (set_tcp_low_latency(hp_tmp->ph.fd) == -1)
+        {
+          close(hp_tmp->ph.fd);
+          hp_tmp->ph.fd = -1;
+          return SOCKET_ERROR;
+        }
+
+      /* set fd blocking */
+      if (set_fd_blocking(hp_tmp->ph.fd) == -1)
+        {
+          close(hp_tmp->ph.fd);
+          hp_tmp->ph.fd = -1;
+          return SOCKET_ERROR;
+        }
+
+#ifndef NO_SSL
+      if (hp_tmp->use_ssl && hp_tmp->ssl_h == NULL)
+        {
+          BIO *s_bio = NULL;
+          rc = connect_ssl(hp_tmp->ph.fd, hp_tmp->client_ctx, &hp_tmp->ssl_h, &s_bio, timeout);
+          if (rc != 0)
+            {
+              close(hp_tmp->ph.fd);
+              hp_tmp->ph.fd = rc;
+
+              if (persistent_connections)
+                {
+                  if (++hp_tmp->persistent_tries < 2)
+                    {
+                      close(hp_tmp->ph.fd);
+                      hp_tmp->ph.fd = -1;
+                      hp_tmp->persistent_did_reconnect = 1;
+                      return PERS_FAIL;
+                    }
+                }
+            }
+        }
+#endif
+      hp_tmp->ph.state = (*req_sent) ? 2 : 1;
+    }
+
+  if (hp_tmp->ph.fd < 0)
+    {
+      if (hp_tmp->ph.fd == -2)
+        snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
+      emit_error();
+      hp_tmp->ph.state = 0;
+      hp_tmp->ph.fd = -1;
+      return SOCKET_ERROR;
+    }
+
+  return OK;
+}
+
+inline int state_write(host_param* hp_tmp, int req_sent, int persistent_connections)
 {
   int rc;
 
 #ifndef NO_SSL
-  if (hp_tmp->use_ssl || use_ssl)
+  if (hp_tmp->use_ssl)
     rc = ph_send_ssl(hp_tmp->ssl_h, &hp_tmp->ph);
   else
 #endif
@@ -97,7 +205,7 @@ inline int state_read_header(host_param* hp_tmp, int persistent_connections, int
 
   if (rc == 0) // partial read performed
     return PART_READ;
-  
+
 
   reply = hp_tmp->header;
 

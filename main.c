@@ -235,11 +235,9 @@ int main(int argc, char *argv[])
   char *err_str = "-1";
   char *useragent = NULL;
   char *referer = NULL;
-  char *host = NULL;
   char *pwd = NULL;
   char *usr = NULL;
   char *cookie = NULL;
-  int port = 0;
   char resolve_once = 0;
   char auth_mode = 0;
   int  req_sent = 0;
@@ -538,6 +536,9 @@ int main(int argc, char *argv[])
           hp_tmp->use_ssl = 1;
         }
 
+      if (use_ssl)
+        hp_tmp->use_ssl = 1;
+
       slash = strchr(getcopy, '/');
       if (slash)
         *slash = 0x00;
@@ -583,7 +584,7 @@ int main(int argc, char *argv[])
 
       hp_set_start_values(hp_tmp);
 #ifndef NO_SSL
-      if (hp_tmp->use_ssl || use_ssl)
+      if (hp_tmp->use_ssl)
         {
           get = mymalloc(8 /* http:// */ + strlen(hp_tmp->name) + 1 /* colon */ + 5 /* portnr */ + 1 /* / */ + 1 /* 0x00 */, "get");
           sprintf(get, "https://%s:%d/", hp_tmp->name, hp_tmp->portnr);
@@ -612,7 +613,7 @@ int main(int argc, char *argv[])
         }
 
 #ifndef NO_SSL
-      if (hp_tmp->use_ssl || use_ssl)
+      if (hp_tmp->use_ssl)
         {
           hp_tmp->client_ctx = initialize_ctx();
           if (!hp_tmp->client_ctx)
@@ -694,7 +695,7 @@ int main(int argc, char *argv[])
   timeout *= 1000;	/* change to ms */
 
   /* struct sockaddr_in6 addr; */
-  struct addrinfo *ai = NULL, *ai_use;
+  struct addrinfo *ai = NULL;
   double started_at = get_ts();
   struct timeval to;
   int wake_up;
@@ -726,102 +727,19 @@ int main(int argc, char *argv[])
             {
               hp_tmp->sc = NULL;
               wake_up++;
-              host = proxyhost ? proxyhost : hp_tmp->name;
-              port = proxyhost ? proxyport : hp_tmp->portnr;
             persistent_loop:
-              if (hp_tmp->ph.fd == -1 && (!resolve_once || (resolve_once == 1 && hp_tmp->have_resolved == 0)))
-                {
-                  memset(&hp_tmp->addr, 0x00, sizeof(hp_tmp->addr));
-
-                  if (ai)
-                    {
-                      freeaddrinfo(ai);
-                      ai = NULL;
-                    }
-
-                  if (resolve_host(host, &ai, use_ipv6, port) == -1)
-                    {
-                      hp_tmp->err++;
-                      emit_error();
-                      hp_tmp->have_resolved = 1;
-                      continue;
-                    }
-                  ai_use = select_resolved_host(ai, use_ipv6);
-                  get_addr(ai_use, &hp_tmp->addr);
-                }
-
-              req_sent = 0;
-
-              if ((persistent_connections && hp_tmp->ph.fd < 0) || (!persistent_connections))
-                {
-                  hp_tmp->dstart = get_ts();
-                  hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, &hp_tmp->ph.pb, &req_sent);
-                }
-              if (hp_tmp->ph.fd == -3)
-                  continue;
-              if (hp_tmp->ph.fd < 0)
-                {
-                  emit_error();
-                  hp_tmp->ph.fd = -1;
-                  continue;
-                }
-
-              if (hp_tmp->ph.fd >= 0)
-                {
-                  /* set socket to low latency */
-                  if (set_tcp_low_latency(hp_tmp->ph.fd) == -1)
-                    {
-                      close(hp_tmp->ph.fd);
-                      hp_tmp->ph.fd = -1;
-                      continue;
-                    }
-
-                  /* set fd blocking */
-                  if (set_fd_blocking(hp_tmp->ph.fd) == -1)
-                    {
-                      close(hp_tmp->ph.fd);
-                      hp_tmp->ph.fd = -1;
-                      continue;
-                    }
-
-#ifndef NO_SSL
-                  if ((hp_tmp->use_ssl || use_ssl) && hp_tmp->ssl_h == NULL)
-                    {
-                      BIO *s_bio = NULL;
-                      rc = connect_ssl(hp_tmp->ph.fd, hp_tmp->client_ctx, &hp_tmp->ssl_h, &s_bio, timeout);
-                      if (rc != 0)
-                        {
-                          close(hp_tmp->ph.fd);
-                          hp_tmp->ph.fd = rc;
-
-                          if (persistent_connections)
-                            {
-                              if (++hp_tmp->persistent_tries < 2)
-                                {
-                                  close(hp_tmp->ph.fd);
-                                  hp_tmp->ph.fd = -1;
-                                  hp_tmp->persistent_did_reconnect = 1;
-                                  goto persistent_loop;
-                                }
-                            }
-                        }
-                    }
-#endif
-                  hp_tmp->ph.state = (req_sent) ? 2 : 1;
-                }
-
+              rc = state_init(hp_tmp, resolve_once, ai, (bind_to_valid?bind_to:NULL), proxyhost, proxyport, use_ipv6, &req_sent, persistent_connections, timeout, tfo);
+              if (rc == NOT_RESOLVED || rc == SOCKET_ERROR){
+                printf("continue");
+                continue;
+              }
+              if (rc == PERS_FAIL){
+                printf("fail");
+                goto persistent_loop;
+              }
               if (split)
                 dafter_connect = get_ts();
-              if (hp_tmp->ph.fd < 0)
-                {
-                  if (hp_tmp->ph.fd == -2)
-                    snprintf(last_error, ERROR_BUFFER_SIZE, "timeout connecting to host\n");
-                  emit_error();
-                  hp_tmp->ph.state = 0;
-                  hp_tmp->ph.fd = -1;
-                  continue;
-                }
-            }//end state == 0
+            }
 
           //states
           if (hp_tmp->ph.state == 0)//request connection again
@@ -865,7 +783,7 @@ int main(int argc, char *argv[])
           /* state 1*/
           if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
-              rc = state_write(hp_tmp, req_sent, persistent_connections, use_ssl);
+              rc = state_write(hp_tmp, req_sent, persistent_connections);
               if (rc == PERS_FAIL) //try again
                 {
                   goto_loop = 1;
@@ -916,7 +834,7 @@ int main(int argc, char *argv[])
               hp_tmp->curncount++;
               curncount++;
 #ifndef NO_SSL
-              if ((hp_tmp->use_ssl || use_ssl) && !persistent_connections)
+              if (hp_tmp->use_ssl && !persistent_connections)
                 {
                   if (show_fp && hp_tmp->ssl_h != NULL)
                     {
@@ -1011,7 +929,7 @@ int main(int argc, char *argv[])
                         }
                     }
 
-                  if ((hp_tmp->use_ssl || use_ssl) && show_fp && fp != NULL)
+                  if (hp_tmp->use_ssl && show_fp && fp != NULL)
                     {
                       printf(" %s", fp);
                       free(fp);
