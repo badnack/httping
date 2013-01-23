@@ -647,7 +647,9 @@ int main(int argc, char *argv[])
         pb_write_request(pb, 1, "User-Agent: %s\r\n", useragent);
       else
         pb_write_request(pb, 1, "User-Agent: HTTPing v" VERSION "\r\n");
+
       pb_write_request(pb, 1, "Host: %s\r\n", hp_tmp->name);
+
       if (referer)
         pb_write_request(pb, 1, "Referer: %s\r\n", referer);
       if (ask_compression)
@@ -698,11 +700,11 @@ int main(int argc, char *argv[])
   struct addrinfo *ai = NULL;
   double started_at = get_ts();
   struct timeval to;
-  int wake_up;
+  int alive;
 
   to.tv_sec = wait + 5;
   to.tv_usec = 0;
-  wake_up = 0;
+  alive = 0;
 
   while((curncount < count || count == -1) && stop == 0)
     {
@@ -722,7 +724,7 @@ int main(int argc, char *argv[])
           if (hp_tmp->ph.state == 0 && !hp_tmp->fatal && hp_tmp->wait <= time)
             {
               hp_tmp->sc = NULL;
-              wake_up++;
+              alive++;
             persistent_loop:
               rc = state_init(hp_tmp, resolve_once, ai, (bind_to_valid?bind_to:NULL), proxyhost, proxyport, use_ipv6, &req_sent, persistent_connections, timeout, tfo);
               if (rc == NOT_RESOLVED || rc == SOCKET_ERROR)
@@ -756,7 +758,7 @@ int main(int argc, char *argv[])
         }//end for
 
       /* to prevent CPU high usage */
-      if (!wake_up && curncount != count && !stop)
+      if (!alive && curncount != count && !stop)
         {
           usleep((useconds_t)(wait * 1000000.0));
           continue; // in order to avoid select fail
@@ -823,7 +825,7 @@ int main(int argc, char *argv[])
           /* state 4: show results */
           if (hp_tmp->ph.state == 4)
             {
-              wake_up--;
+              alive--;
               curncount++;
               state_show_results(hp_tmp, persistent_connections, show_fp, machine_readable, ok_str, show_statuscodes, audible, quiet, nagios_mode, show_Bps, show_bytes_xfer, ask_compression, is_compressed, err_str, split, dafter_connect);
               free(hp_tmp->sc);
@@ -837,10 +839,11 @@ int main(int argc, char *argv[])
   for(index = 0; index < n_hosts; index++)
     {
       hp_tmp = &hp[index];
-      if (hp_tmp->ok){
-        hp_tmp->avg_httping_time = hp_tmp->avg / (double)hp_tmp->ok;
-        ok++;
-      }
+      if (hp_tmp->ok)
+        {
+          hp_tmp->avg_httping_time = hp_tmp->avg / (double)hp_tmp->ok;
+          ok++;
+        }
       else
         hp_tmp->avg_httping_time = -1.0;
 

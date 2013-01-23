@@ -163,7 +163,7 @@ inline int state_write(host_param* hp_tmp, int req_sent, char persistent_connect
       hp_tmp->err++;
       return N_PERS_FAIL;
     }
-  else if (rc == 0) //rc == 0: write not yet completed
+  else if (rc == 0)
     return PART_WRITE;
 
   return REQUEST_SENT;
@@ -213,9 +213,8 @@ inline int state_read_header(host_param* hp_tmp, char persistent_connections, in
       return RECV_FAIL;
     }
 
-  if (rc == 0) // partial read performed
+  if (rc == 0)
     return PART_READ;
-
 
   reply = hp_tmp->header;
 
