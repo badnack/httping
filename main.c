@@ -708,9 +708,9 @@ int main(int argc, char *argv[])
   struct addrinfo* ai_use;
   double started_at = get_ts();
   struct timeval to;
-  int bl_index, bl_found;
+  int bl_index;
 
-  to.tv_sec = wait;
+  to.tv_sec = wait + 1;
   to.tv_usec = 0;
   alive = 0;
 
@@ -860,15 +860,15 @@ int main(int argc, char *argv[])
           usleep((useconds_t)(wait * 1000000.0));
           continue; // in order to avoid select fail
         }
-
       if ((ret = select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
-          to.tv_sec = wait;
+          to.tv_sec = wait + 1;
+          
           if (stop)
             break;
           if (ret == 0)
             {
-              bl_index = bl_found = 0;
+              bl_index  = 0;
               for (;bl_index < n_hosts; bl_index++)
                 {
                   body_no_len = 0;
@@ -880,9 +880,8 @@ int main(int argc, char *argv[])
                       goto body_no_len;
                     }
                 }
-
-              if (!bl_found)
-                error_exit("\nNo more hosts available\n");
+              
+              printf("No request/response, try again\n");
               continue;
             }
           else
@@ -1053,6 +1052,8 @@ int main(int argc, char *argv[])
                         hp_tmp->cur_limit = hp_tmp->rep_len - overflow;
                     }
 
+                  hp_tmp->dend = get_ts();
+
                   if (get_instead_of_head && show_Bps)
                     {
                       hp_tmp->ph.state = 3;
@@ -1060,7 +1061,6 @@ int main(int argc, char *argv[])
                     }
                   else
                     {
-                      hp_tmp->dend = get_ts();
                       hp_tmp->ph.state = 4;
                     }
                 }
@@ -1230,10 +1230,7 @@ int main(int argc, char *argv[])
               if (curncount != count && !stop)
                 hp_tmp->wait = get_ts() + wait;
               if (body_no_len)
-                {
-                  bl_found = 1;
                   goto for_body_no_len;
-                }
             }
         }// for select
     }// while
