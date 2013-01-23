@@ -729,14 +729,12 @@ int main(int argc, char *argv[])
               wake_up++;
             persistent_loop:
               rc = state_init(hp_tmp, resolve_once, ai, (bind_to_valid?bind_to:NULL), proxyhost, proxyport, use_ipv6, &req_sent, persistent_connections, timeout, tfo);
-              if (rc == NOT_RESOLVED || rc == SOCKET_ERROR){
-                printf("continue");
+              if (rc == NOT_RESOLVED || rc == SOCKET_ERROR)
                 continue;
-              }
-              if (rc == PERS_FAIL){
-                printf("fail");
+
+              if (rc == PERS_FAIL)
                 goto persistent_loop;
-              }
+
               if (split)
                 dafter_connect = get_ts();
             }
