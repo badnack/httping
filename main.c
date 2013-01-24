@@ -260,7 +260,7 @@ int main(int argc, char *argv[])
   char no_cache = 0;
   int tfo = 0;
   int index;
-  int body_no_len;
+  int body_no_len = 0;
   fd_set rd, wr;
   int type_err;
   char* fp;
@@ -708,10 +708,8 @@ int main(int argc, char *argv[])
   struct addrinfo* ai_use;
   double started_at = get_ts();
   struct timeval to;
-  int bl_index, bl_found;
+  int bl_index = 0, bl_found = 0;
 
-  to.tv_sec = wait + 1;
-  to.tv_usec = 0;
   alive = 0;
 
   while((curncount < count || count == -1) && stop == 0)
@@ -724,6 +722,9 @@ int main(int argc, char *argv[])
       goto_loop = 0;
       FD_ZERO(&rd);
       FD_ZERO(&wr);
+      to.tv_sec = wait + 1;
+      to.tv_usec = 0;
+
       time = get_ts();
 
       for(index = 0; index < n_hosts; index++)
@@ -831,7 +832,7 @@ int main(int argc, char *argv[])
 
               if (split)
                 dafter_connect = get_ts();
-              hp_tmp->ph.state = (req_sent) ? 2 : 1;            
+              hp_tmp->ph.state = (req_sent) ? 2 : 1;
             }
 
           //states
@@ -841,12 +842,12 @@ int main(int argc, char *argv[])
               FD_CLR(hp_tmp->ph.fd, &wr);
             }
           else if (hp_tmp->ph.state == 1)//ready to write request
-            FD_SET(hp_tmp->ph.fd, &wr);              
+            FD_SET(hp_tmp->ph.fd, &wr);
           else if (hp_tmp->ph.state == 2)//ready to read Header
             FD_SET(hp_tmp->ph.fd, &rd);
           else if (hp_tmp->ph.state == 3)//ready to read Body
             FD_SET(hp_tmp->ph.fd, &rd);
-          
+
           if (goto_loop)
             {
               goto_loop = 0;
@@ -860,10 +861,9 @@ int main(int argc, char *argv[])
           usleep((useconds_t)(wait * 1000000.0));
           continue; // in order to avoid select fail
         }
+
       if ((ret = select(hp_max_fd(hp, n_hosts) + 1 , &rd, &wr, NULL, &to)) <= 0)
         {
-          to.tv_sec = wait + 1;
-          
           if (stop)
             break;
           if (ret == 0)
@@ -881,8 +881,9 @@ int main(int argc, char *argv[])
                       goto body_no_len;
                     }
                 }
+              body_no_len = 0;
               if (!bl_found)
-                printf("No request/response, try again\n");
+                error_exit("\nNo more host available\n");
               continue;
             }
           else
@@ -1231,7 +1232,7 @@ int main(int argc, char *argv[])
               if (curncount != count && !stop)
                 hp_tmp->wait = get_ts() + wait;
               if (body_no_len)
-                  goto for_body_no_len;
+                goto for_body_no_len;
             }
         }// for select
     }// while
