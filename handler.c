@@ -119,7 +119,7 @@ int ph_recv_ssl_HTTP_header(ping_handler* ph, SSL* ssl_h, char** header, int* h_
   return 0;
 }
 
-int ph_recv_HTTP_body(ping_handler* ph, char** buffer)
+int ph_recv_HTTP_body(ping_handler* ph, char** buffer, int* b_len)
 {
   int rc, cnt;
 
@@ -130,9 +130,12 @@ int ph_recv_HTTP_body(ping_handler* ph, char** buffer)
   if (rc == -1)	/* socket closed before request was read? */
     return -1;
 
+  if (*b_len < 0)
+    *b_len = 0;
+
   if (buffer != NULL && (cnt = pb_get_cnt_reply(&ph->pb)) > 0)
     {
-      *buffer = (char*)realloc(*buffer, cnt);
+      *buffer = (char*)realloc(*buffer, *b_len + cnt);
       cnt = pb_read_reply(&ph->pb, *buffer, cnt);
     }
 
@@ -142,9 +145,10 @@ int ph_recv_HTTP_body(ping_handler* ph, char** buffer)
 int ph_get_and_clean(ping_handler* ph)
 {
   char* dummy = NULL;
-  int rc;
+  int rc, cnt;
 
-  rc = ph_recv_HTTP_body(ph, &dummy);
+  cnt = 0;
+  rc = ph_recv_HTTP_body(ph, &dummy, &cnt);
   if (dummy != NULL) //in order to empty the ping_buffer
     free(dummy);
   return rc;

@@ -30,7 +30,7 @@ struct host_param {
   long long int Bps_avg;
   double avg, min, max;
   double avg_httping_time;
-  double dl_start, dl_end;  
+  double dl_start, dl_end;
   int curncount;
   int cur_limit;
   char* name;
@@ -41,7 +41,7 @@ struct host_param {
   char have_resolved;
   double dstart, dend, wait;
   struct sockaddr_in6 addr;
-  ping_handler ph; //FIXME, void?
+  ping_handler ph;
   int fatal;
   int persistent_tries;
   char* header;
@@ -53,7 +53,21 @@ struct host_param {
   SSL *ssl_h;
 };
 
+/**
+   Initializes the default params.
+
+   @param hp Host param structure
+*/
 void hp_set_start_values(host_param* hp);
+
+/**
+   Retrieves the value of the maximum file descriptor value in a
+   host_param array.
+
+   @param hp Host param array
+   @param n Number of elements in the array
+   @return the maximum value
+*/
 int hp_max_fd(host_param *hp, int n);
 
 #endif

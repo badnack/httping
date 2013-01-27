@@ -1,9 +1,10 @@
-#include "buffer.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include "buffer.h"
 
 static int pb_read(_buffer* _buf, char* buffer, int n)
 {
@@ -87,7 +88,7 @@ int pb_write_request(ping_buffer* pb, int mode, char* fmt, ...)
   if (req->cnt == req->size && mode)
     return -1;
 
-  va_start(argptr,fmt);
+  va_start(argptr, fmt);
   vsnprintf(formatted_string, FMT_SIZE, fmt, argptr);
   va_end(argptr);
   len = strnlen(formatted_string, FMT_SIZE);

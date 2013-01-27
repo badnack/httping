@@ -244,7 +244,6 @@ int main(int argc, char *argv[])
   double nagios_warn=0.0, nagios_crit=0.0;
   int nagios_exit_code = 2;
   int get_instead_of_head = 0;
-  char *buffer = NULL;
   int page_size = sysconf(_SC_PAGESIZE);
   char show_Bps = 0, ask_compression = 0;
   int Bps_limit = -1;
@@ -315,8 +314,6 @@ int main(int argc, char *argv[])
 
   if (page_size == -1)
     page_size = 4096;
-
-  buffer = (char *)mymalloc(page_size, "receive buffer");
 
   while((c = getopt_long(argc, argv, "ZQ6Sy:XL:bBp:c:i:Gx:t:o:e:falqsmV?I:R:rn:N:z:AP:U:C:F", long_options, NULL)) != -1)
     {
@@ -1274,7 +1271,6 @@ int main(int argc, char *argv[])
   ok = 0;
   type_err = 0;
   freeaddrinfo(ai);
-  free(buffer);
 
   for(index = 0; index < n_hosts; index++)
     {
