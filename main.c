@@ -703,7 +703,7 @@ int main(int argc, char *argv[])
   struct addrinfo* ai_use;
   double started_at = get_ts();
   struct timeval to;
-  int bl_index = 0, bl_found = 0;
+  int bl_index = 0, bl_found = 0, bl_state_init;
 
   alive = 0;
 
@@ -860,13 +860,17 @@ int main(int argc, char *argv[])
         {
           if (stop)
             break;
+
           if (ret == 0)
-            {
+            {              
               bl_index = bl_found = 0;
+              bl_state_init = 0;
               for (;bl_index < n_hosts; bl_index++)
                 {
                   body_no_len = 0;
-                for_body_no_len:
+                  if (hp[bl_index].ph.state == 0)
+                    bl_state_init = 1;
+               for_body_no_len:
                   if (hp[bl_index].ph.state == 3)
                     {
                       bl_found = 1;
@@ -876,7 +880,7 @@ int main(int argc, char *argv[])
                     }
                 }
               body_no_len = 0;
-              if (!bl_found)
+              if (!bl_found && !bl_state_init)
                 error_exit("\nNo more host available\n");
               continue;
             }
