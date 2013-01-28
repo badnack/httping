@@ -833,8 +833,10 @@ int main(int argc, char *argv[])
           //states
           if (hp_tmp->ph.state == 0)//request connection again
             {
-              FD_CLR(hp_tmp->ph.fd, &rd);
-              FD_CLR(hp_tmp->ph.fd, &wr);
+              if (hp_tmp->ph.fd != -1) {
+                  FD_CLR(hp_tmp->ph.fd, &rd);
+                  FD_CLR(hp_tmp->ph.fd, &wr);
+                }
             }
           else if (hp_tmp->ph.state == 1)//ready to write request
             FD_SET(hp_tmp->ph.fd, &wr);
@@ -889,6 +891,10 @@ int main(int argc, char *argv[])
         {
           hp_tmp = &hp[index];
 
+          /* BSD select overflow fix */
+          if (hp_tmp->ph.fd == -1)
+            continue;
+
           /* state 1: send request*/
           if (FD_ISSET(hp_tmp->ph.fd, &wr) && hp_tmp->ph.state == 1)
             {
@@ -940,10 +946,10 @@ int main(int argc, char *argv[])
 
 #ifndef NO_SSL
                   if (hp_tmp->ssl_h)
-                    rc = ph_recv_ssl_HTTP_header(&hp_tmp->ph, hp_tmp->ssl_h, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
+                    rc = ph_recv_ssl_HTTP_header(&hp_tmp->ph, hp_tmp->ssl_h, &hp_tmp->header, &hp_tmp->header_len, &overflow);
                   else
 #endif
-                    rc = ph_recv_HTTP_header(&hp_tmp->ph, &hp_tmp->header, &hp_tmp->header_len, &overflow); //FIXME
+                    rc = ph_recv_HTTP_header(&hp_tmp->ph, &hp_tmp->header, &hp_tmp->header_len, &overflow);
 
                   if (rc < 0)
                     {
@@ -1167,7 +1173,7 @@ int main(int argc, char *argv[])
                   char *operation = !persistent_connections ? "connected to" : "pinged host";
 
                   if (getnameinfo((const struct sockaddr *)&hp_tmp->addr, sizeof(hp_tmp->addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) != 0)
-                    snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
+                    snprintf(current_host, 23, "(getnameinfo() failed)");
 
                   if (persistent_connections && show_bytes_xfer)
                     printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp_tmp->portnr, hp_tmp->name, hp_tmp->header_len, hp_tmp->rep_len, hp_tmp->curncount);
