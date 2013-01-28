@@ -17,6 +17,8 @@
 #define HOSTPARAM_INCLUDE
 
 #include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #ifndef NO_SSL
 #include <openssl/ssl.h>
 #include "mssl.h"
