@@ -44,8 +44,6 @@
 
 #define BUF_SIZE 4096
 
-typedef struct host_param host_param;
-
 static volatile int stop = 0;
 
 int quiet = 0;
