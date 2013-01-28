@@ -763,9 +763,6 @@ int main(int argc, char *argv[])
                   hp_tmp->ph.fd = connect_to((struct sockaddr *)(bind_to_valid?bind_to:NULL), ai, timeout, tfo, &hp_tmp->ph.pb, &req_sent);
                 }
 
-              if (hp_tmp->ph.fd == -3)
-                continue;
-
               if (hp_tmp->ph.fd < 0)
                 {
                   emit_error();
