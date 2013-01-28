@@ -1170,7 +1170,7 @@ int main(int argc, char *argv[])
                   char *operation = !persistent_connections ? "connected to" : "pinged host";
 
                   if (getnameinfo((const struct sockaddr *)&hp_tmp->addr, sizeof(hp_tmp->addr), current_host, sizeof(current_host), NULL, 0, NI_NUMERICHOST) != 0)
-                    snprintf(current_host, 23, "(getnameinfo() failed)");
+                    snprintf(current_host, sizeof(current_host), "getnameinfo() failed: %d", errno);
 
                   if (persistent_connections && show_bytes_xfer)
                     printf("%s %s:%d (%s) (%d/%d bytes), seq=%d ", operation, current_host, hp_tmp->portnr, hp_tmp->name, hp_tmp->header_len, hp_tmp->rep_len, hp_tmp->curncount);
