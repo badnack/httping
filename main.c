@@ -862,7 +862,7 @@ int main(int argc, char *argv[])
             break;
 
           if (ret == 0)
-            {              
+            {
               bl_index = bl_found = 0;
               bl_state_init = 0;
               for (;bl_index < n_hosts; bl_index++)
